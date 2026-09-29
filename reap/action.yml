@@ -1,0 +1,49 @@
+name: vm-gh-runners reap
+description: >-
+  Delete the pool's idle servers in the last minutes of their paid hour. Run it
+  on a schedule (every 5 minutes) from the consuming repo.
+
+inputs:
+  pool:
+    description: The pool whose servers to consider. Must match the one given to ensure.
+    required: true
+  hcloud-token:
+    description: Hetzner project API token (read and write). Pass it from a secret.
+    required: true
+  github-token:
+    description: >-
+      Token that can manage this repo's runners (fine-grained PAT with
+      Administration read and write). Pass it from a secret.
+    required: true
+  window-start-minute:
+    description: >-
+      Minute of each paid hour (0-59) from which an idle server may be deleted.
+      Defaults to 50. Lower it if the reaper runs less often than every 5 minutes.
+    required: false
+
+outputs:
+  deleted:
+    description: Number of servers deleted.
+    value: ${{ steps.cli.outputs.deleted }}
+  kept:
+    description: Number of servers left running.
+    value: ${{ steps.cli.outputs.kept }}
+  errors:
+    description: Number of servers that could not be handled. The step also fails if this is above zero.
+    value: ${{ steps.cli.outputs.errors }}
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.3.13
+    - id: cli
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+        VGR_GITHUB_TOKEN: ${{ inputs.github-token }}
+        VGR_POOL: ${{ inputs.pool }}
+        VGR_WINDOW_START_MINUTE: ${{ inputs.window-start-minute }}
+      run: bun "$ACTION_PATH/../src/cli.ts" reap

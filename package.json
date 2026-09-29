@@ -1,0 +1,17 @@
+{
+  "name": "vm-gh-runners",
+  "version": "0.0.0",
+  "description": "Reuse a rented VM as GitHub Actions runners for the billing hour you already paid for, then delete it when idle.",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "cli": "bun src/cli.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

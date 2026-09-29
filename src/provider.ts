@@ -1,0 +1,64 @@
+/**
+ * The whole provider-specific surface. Everything else in this repo talks to a
+ * `Provider`, so adding a cloud means writing one adapter and nothing more.
+ */
+
+export type Labels = Readonly<Record<string, string>>;
+
+export interface Server {
+  readonly id: string;
+  readonly name: string;
+  readonly labels: Labels;
+  /** Creation time. Billing hours are counted from here, not from first use. */
+  readonly createdAt: Date;
+  readonly status: "starting" | "running" | "stopping" | "off";
+  /** Public IPv4, if the server has one. Needed to reach it over SSH. */
+  readonly address?: string;
+}
+
+export interface CreateServerSpec {
+  readonly name: string;
+  readonly labels: Labels;
+  /** Provider-specific size name, e.g. a Hetzner server type. */
+  readonly serverType: string;
+  readonly image: string;
+  readonly location: string;
+  /**
+   * First-boot script. Anything in here is readable from inside the VM without
+   * authentication on most clouds, so never put a provider token in it.
+   */
+  readonly userData: string;
+}
+
+export interface Provider {
+  createServer(spec: CreateServerSpec): Promise<Server>;
+  /** Servers whose labels contain every key/value in `selector`. */
+  listServers(selector: Labels): Promise<readonly Server[]>;
+  deleteServer(id: string): Promise<void>;
+}
+
+export const labelsMatch = (labels: Labels, selector: Labels): boolean =>
+  Object.entries(selector).every(([k, v]) => labels[k] === v);
+
+/**
+ * Labels for a pool's server for one repo. Shared by ensure and reap so they
+ * always agree. Cloud label values are restricted (Hetzner: letters, digits,
+ * `-`, `_`, `.`, at most 63 chars), so `owner/name` becomes `owner_name`. That
+ * is unambiguous because GitHub owner names cannot contain `_`.
+ */
+export const serverLabels = (pool: string, repo: string): Labels => ({
+  pool,
+  repo: repo.replace("/", "_"),
+});
+
+/**
+ * Thrown by `createServer` when a server with that name already exists. Names
+ * are unique per provider project, which makes a deterministic name a lock:
+ * of several concurrent creators exactly one succeeds and the rest get this.
+ */
+export class ServerExistsError extends Error {
+  constructor(readonly serverName: string) {
+    super(`a server named "${serverName}" already exists`);
+    this.name = "ServerExistsError";
+  }
+}

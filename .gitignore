@@ -1,0 +1,4 @@
+node_modules/
+.claude/worktrees/
+.claude/.no-worktree-guard
+*.log

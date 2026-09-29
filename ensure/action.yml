@@ -1,0 +1,92 @@
+name: vm-gh-runners ensure
+description: >-
+  Reuse or create a pooled VM and make sure its GitHub Actions runners are
+  registered, so later jobs can run on it. Safe to call from any number of
+  runs at once; do not add a `concurrency:` group for it, because GitHub
+  cancels all but the newest pending job in a group.
+
+inputs:
+  pool:
+    description: Names a group of servers. One pool per kind of workload.
+    required: true
+  server-type:
+    description: Provider size, for example a Hetzner type such as cpx62.
+    required: true
+  ssh-key-names:
+    description: Comma-separated names or IDs of SSH keys already uploaded to the Hetzner project.
+    required: true
+  ssh-private-key:
+    description: The private half of that key. Pass it from a secret.
+    required: true
+  hcloud-token:
+    description: Hetzner project API token (read and write). Pass it from a secret.
+    required: true
+  github-token:
+    description: >-
+      Token that can manage this repo's runners (fine-grained PAT with
+      Administration read and write). The workflow's own GITHUB_TOKEN cannot.
+      Pass it from a secret.
+    required: true
+  runner-count:
+    description: Runners per server. Defaults to 3.
+    required: false
+  image:
+    description: Server image. Defaults to ubuntu-24.04.
+    required: false
+  location:
+    description: Server location. Defaults to nbg1.
+    required: false
+  runner-labels:
+    description: Comma-separated runner labels. Defaults to "vm-gh-runners,pool-<pool>".
+    required: false
+  runner-version:
+    description: Runner version such as 2.321.0, or "latest" (the default). Pin it for repeatable builds.
+    required: false
+  extra-packages:
+    description: Comma-separated extra apt packages the jobs need.
+    required: false
+
+outputs:
+  server_id:
+    description: ID of the server the jobs will run on.
+    value: ${{ steps.cli.outputs.server_id }}
+  server_name:
+    description: Name of that server.
+    value: ${{ steps.cli.outputs.server_name }}
+  created:
+    description: "true if this call created the server, false if it reused one."
+    value: ${{ steps.cli.outputs.created }}
+  registered:
+    description: Number of runners this call registered or repaired.
+    value: ${{ steps.cli.outputs.registered }}
+  runs_on:
+    description: >-
+      JSON array of labels for the jobs that should use the VM. Use it as
+      `runs-on: ${{ fromJSON(needs.<job>.outputs.runs_on) }}`.
+    value: ${{ steps.cli.outputs.runs_on }}
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.3.13
+    - id: cli
+      shell: bash
+      # Everything reaches the CLI through env, never by interpolating into the
+      # script: a value pasted into `run:` is parsed as shell.
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+        VGR_GITHUB_TOKEN: ${{ inputs.github-token }}
+        VGR_POOL: ${{ inputs.pool }}
+        VGR_SERVER_TYPE: ${{ inputs.server-type }}
+        VGR_SSH_KEY_NAMES: ${{ inputs.ssh-key-names }}
+        VGR_SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
+        VGR_RUNNER_COUNT: ${{ inputs.runner-count }}
+        VGR_IMAGE: ${{ inputs.image }}
+        VGR_LOCATION: ${{ inputs.location }}
+        VGR_RUNNER_LABELS: ${{ inputs.runner-labels }}
+        VGR_RUNNER_VERSION: ${{ inputs.runner-version }}
+        VGR_EXTRA_PACKAGES: ${{ inputs.extra-packages }}
+      run: bun "$ACTION_PATH/../src/cli.ts" ensure
