@@ -3,6 +3,7 @@ import { reap } from "../src/reap.ts";
 import { MockGithub } from "../src/mock-github.ts";
 import { MockProvider } from "../src/mock-provider.ts";
 import { runnerName } from "../src/github.ts";
+import { serverLabels } from "../src/provider.ts";
 
 const t0 = new Date("2026-01-01T00:00:00Z");
 const at = (m: number) => new Date(t0.getTime() + m * 60_000);
@@ -21,7 +22,7 @@ let provider: MockProvider;
 let github: MockGithub;
 
 const addServerWithRunners = async (name: string, busyIds: number[] = []) => {
-  const s = await provider.createServer(spec(name, { pool: "ci", repo: "karimn/sia" }));
+  const s = await provider.createServer(spec(name, serverLabels("ci", "karimn/sia")));
   [1, 2].forEach((n) => {
     const id = Number(s.id) * 10 + n;
     github.addRunner({
@@ -124,7 +125,7 @@ describe("reap", () => {
   });
 
   test("deletes an idle server that never got any runners registered", async () => {
-    await provider.createServer(spec("bare", { pool: "ci", repo: "karimn/sia" }));
+    await provider.createServer(spec("bare", serverLabels("ci", "karimn/sia")));
     const [r] = await reap(provider, github, cfg, at(55));
     expect(r?.action).toBe("deleted");
   });
@@ -132,7 +133,7 @@ describe("reap", () => {
   test("judges each server on its own and leaves other pools alone", async () => {
     await addServerWithRunners("busy-one", [11]);
     await addServerWithRunners("idle-one");
-    await provider.createServer(spec("elsewhere", { pool: "other", repo: "karimn/sia" }));
+    await provider.createServer(spec("elsewhere", serverLabels("other", "karimn/sia")));
 
     const results = await reap(provider, github, cfg, at(55));
     const byName = Object.fromEntries(results.map((x) => [x.name, x.action]));

@@ -1,5 +1,5 @@
 import { runnerName, type GithubHost } from "./github.ts";
-import type { Provider, Server } from "./provider.ts";
+import { serverLabels, type Provider, type Server } from "./provider.ts";
 import type { RunnerRegistrar } from "./registrar.ts";
 
 export interface EnsureConfig {
@@ -20,11 +20,19 @@ export interface EnsureResult {
 
 const LIVE: ReadonlySet<Server["status"]> = new Set(["starting", "running"]);
 
-/** Lowercase, hostname-safe, and stable for a given instant. */
+const MAX_HOSTNAME = 63;
+
+/**
+ * Lowercase, hostname-safe, at most 63 chars, and stable for a given instant.
+ * A long pool/repo is truncated, never the timestamp, which keeps names unique.
+ */
 const serverName = (cfg: EnsureConfig, now: Date): string => {
   const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "").toLowerCase();
-  return `${slug(cfg.pool)}-${slug(cfg.repo)}-${stamp}`;
+  const prefix = `${slug(cfg.pool)}-${slug(cfg.repo)}`
+    .slice(0, MAX_HOSTNAME - stamp.length - 1)
+    .replace(/-+$/, "");
+  return `${prefix}-${stamp}`;
 };
 
 /**
@@ -39,7 +47,7 @@ export const ensureServer = async (
   cfg: EnsureConfig,
   now: Date = new Date(),
 ): Promise<EnsureResult> => {
-  const labels = { pool: cfg.pool, repo: cfg.repo };
+  const labels = serverLabels(cfg.pool, cfg.repo);
   const live = (await provider.listServers(labels))
     .filter((s) => LIVE.has(s.status))
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());

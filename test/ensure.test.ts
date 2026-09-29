@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ensureServer, type EnsureConfig } from "../src/ensure.ts";
 import { MockProvider } from "../src/mock-provider.ts";
+import { serverLabels } from "../src/provider.ts";
 
 const config: EnsureConfig = {
   pool: "ci",
@@ -19,7 +20,7 @@ describe("ensureServer", () => {
     const r = await ensureServer(p, config, t0);
 
     expect(r.created).toBe(true);
-    expect(r.server.labels).toEqual({ pool: "ci", repo: "karimn/sia" });
+    expect(r.server.labels).toEqual({ pool: "ci", repo: "karimn_sia" });
     expect(p.servers.size).toBe(1);
   });
 
@@ -55,10 +56,10 @@ describe("ensureServer", () => {
 
   test("with several live matches, reuses the oldest and creates nothing", async () => {
     const p = new MockProvider(() => t0);
-    const old = await p.createServer({ ...config, name: "old", labels: { pool: "ci", repo: "karimn/sia" } });
+    const old = await p.createServer({ ...config, name: "old", labels: serverLabels("ci", "karimn/sia") });
     const later = new MockProvider(() => new Date(t0.getTime() + 3_600_000));
     p.servers.set("2", {
-      ...(await later.createServer({ ...config, name: "new", labels: { pool: "ci", repo: "karimn/sia" } })),
+      ...(await later.createServer({ ...config, name: "new", labels: serverLabels("ci", "karimn/sia") })),
       id: "2",
     });
 
@@ -66,6 +67,15 @@ describe("ensureServer", () => {
     expect(r.created).toBe(false);
     expect(r.server.id).toBe(old.id);
     expect(p.servers.size).toBe(2);
+  });
+
+  test("keeps names within the 63-char hostname limit and the timestamp intact", async () => {
+    const p = new MockProvider(() => t0);
+    const r = await ensureServer(p, { ...config, repo: `karimn/${"long-repo-name-".repeat(6)}` }, t0);
+
+    expect(r.server.name.length).toBeLessThanOrEqual(63);
+    expect(r.server.name.endsWith("-20260101t000000z")).toBe(true);
+    expect(r.server.name).not.toContain("--");
   });
 
   test("names servers uniquely from pool, repo and time", async () => {

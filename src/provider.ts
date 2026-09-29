@@ -37,3 +37,14 @@ export interface Provider {
 
 export const labelsMatch = (labels: Labels, selector: Labels): boolean =>
   Object.entries(selector).every(([k, v]) => labels[k] === v);
+
+/**
+ * Labels for a pool's server for one repo. Shared by ensure and reap so they
+ * always agree. Cloud label values are restricted (Hetzner: letters, digits,
+ * `-`, `_`, `.`, at most 63 chars), so `owner/name` becomes `owner_name`. That
+ * is unambiguous because GitHub owner names cannot contain `_`.
+ */
+export const serverLabels = (pool: string, repo: string): Labels => ({
+  pool,
+  repo: repo.replace("/", "_"),
+});

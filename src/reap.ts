@@ -1,6 +1,6 @@
 import { shouldReap } from "./billing.ts";
 import { runnersOfServer, type GithubHost } from "./github.ts";
-import type { Provider, Server } from "./provider.ts";
+import { serverLabels, type Provider, type Server } from "./provider.ts";
 
 export interface ReapConfig {
   readonly pool: string;
@@ -49,7 +49,7 @@ export const reap = async (
   cfg: ReapConfig,
   now: Date = new Date(),
 ): Promise<readonly ReapResult[]> => {
-  const servers = (await provider.listServers({ pool: cfg.pool, repo: cfg.repo })).filter(
+  const servers = (await provider.listServers(serverLabels(cfg.pool, cfg.repo))).filter(
     (s) => LIVE.has(s.status),
   );
   if (servers.length === 0) return [];
