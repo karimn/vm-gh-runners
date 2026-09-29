@@ -115,6 +115,31 @@ export class SshRegistrar implements RunnerRegistrar {
   }
 
   /**
+   * Container jobs run as root, so they leave root-owned files in the runner's
+   * `_work`, and a later plain job's checkout then cannot delete them (#4). The
+   * runner runs these hooks before and after every job; running before as well
+   * as after covers a job that was cancelled or crashed before its own hook
+   * ran. The runner user has passwordless sudo (see userdata.ts). The runner
+   * reads `.env` when the service starts, so this must precede `svc.sh start`.
+   */
+  private ownershipHookScript(name: string): string {
+    const { runnerUser, runnersDir } = this.o;
+    const dir = `${runnersDir}/${name}`;
+    const hook = `${dir}/hooks/fix-ownership.sh`;
+    const work = `${dir}/_work`;
+    return `install -d "$DIR"/hooks
+cat > ${shq(hook)} <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+[ -d ${shq(work)} ] || exit 0
+sudo -n chown -R ${shq(runnerUser)}:${shq(runnerUser)} ${shq(work)}
+HOOK
+chmod 0755 ${shq(hook)}
+printf '\\n%s\\n%s\\n' ${shq(`ACTIONS_RUNNER_HOOK_JOB_STARTED=${hook}`)} ${shq(`ACTIONS_RUNNER_HOOK_JOB_COMPLETED=${hook}`)} >> "$DIR"/.env
+`;
+  }
+
+  /**
    * Idempotent: an existing runner of this name is stopped and replaced, so the
    * same script both creates a missing runner and repairs a dead one. The token
    * is on the runner's command line for the moment it runs; that is the runner's
@@ -139,6 +164,7 @@ chown -R ${shq(runnerUser)}:${shq(runnerUser)} "$DIR"
 runuser -u ${shq(runnerUser)} -- bash -c 'cd "$1" && ./config.sh --unattended --replace --url "$2" --token "$3" --name "$4" --labels "$5" --work _work' _ \\
   "$DIR" ${shq(`https://github.com/${repo}`)} "$TOKEN" "$NAME" ${shq(labels.join(","))}
 
+${this.ownershipHookScript(name)}
 cd "$DIR"
 ./svc.sh install ${shq(runnerUser)}
 ./svc.sh start
