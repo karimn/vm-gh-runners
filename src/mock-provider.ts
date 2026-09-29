@@ -1,5 +1,6 @@
 import {
   labelsMatch,
+  ServerExistsError,
   type CreateServerSpec,
   type Labels,
   type Provider,
@@ -16,6 +17,9 @@ export class MockProvider implements Provider {
 
   async createServer(spec: CreateServerSpec): Promise<Server> {
     this.calls.push(`create:${spec.name}`);
+    if ([...this.servers.values()].some((s) => s.name === spec.name)) {
+      throw new ServerExistsError(spec.name);
+    }
     const server: Server = {
       id: String(this.nextId++),
       name: spec.name,

@@ -1,0 +1,30 @@
+# Copy into the consuming repo's .github/workflows/ next to the workflow that
+# calls the ensure action. Uses the same three secrets.
+#
+# Deletes the pool's idle VMs in the last minutes of their paid hour. The window
+# is the last 10 minutes by default, so this must run at least every 5 minutes:
+# a VM that is missed is billed a second full hour.
+#
+# Where it runs matters for cost. On a GitHub-hosted runner every run bills at
+# least one minute, and every 5 minutes is about 8,600 runs a month, which is
+# far past the free allowance of a private repo. A self-hosted runner is free.
+# The trade-off is that if it is offline, VMs are not reaped and each one that
+# was due costs one extra paid hour.
+
+name: reap idle VMs
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  reap:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: karimn/vm-gh-runners/reap@main
+        with:
+          pool: ci
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          github-token: ${{ secrets.VGR_GITHUB_TOKEN }}

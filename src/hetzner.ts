@@ -1,9 +1,17 @@
-import type { CreateServerSpec, Labels, Provider, Server } from "./provider.ts";
+import {
+  ServerExistsError,
+  type CreateServerSpec,
+  type Labels,
+  type Provider,
+  type Server,
+} from "./provider.ts";
 
 export class HetznerApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Hetzner's machine-readable error code, e.g. `uniqueness_error`. */
+    readonly code?: string,
   ) {
     super(message);
     this.name = "HetznerApiError";
@@ -94,17 +102,25 @@ export class HetznerProvider implements Provider {
     }
     validateLabels(spec.labels);
 
-    const res = await this.request("POST", "/servers", {
-      name: spec.name,
-      server_type: spec.serverType,
-      image: spec.image,
-      location: spec.location,
-      labels: spec.labels,
-      user_data: spec.userData,
-      start_after_create: true,
-      ...(this.sshKeys.length > 0 ? { ssh_keys: this.sshKeys } : {}),
-    });
-    return toServer(((await res.json()) as { server: ApiServer }).server);
+    try {
+      const res = await this.request("POST", "/servers", {
+        name: spec.name,
+        server_type: spec.serverType,
+        image: spec.image,
+        location: spec.location,
+        labels: spec.labels,
+        user_data: spec.userData,
+        start_after_create: true,
+        ...(this.sshKeys.length > 0 ? { ssh_keys: this.sshKeys } : {}),
+      });
+      return toServer(((await res.json()) as { server: ApiServer }).server);
+    } catch (e) {
+      // The only unique field we send is the name.
+      if (e instanceof HetznerApiError && e.status === 409 && e.code === "uniqueness_error") {
+        throw new ServerExistsError(spec.name);
+      }
+      throw e;
+    }
   }
 
   async listServers(selector: Labels): Promise<readonly Server[]> {
@@ -154,13 +170,19 @@ export class HetznerProvider implements Provider {
     if (!res.ok) {
       // Only Hetzner's own message goes into the error, never our request headers.
       let detail = res.statusText;
+      let code: string | undefined;
       try {
-        const err = (await res.json()) as { error?: { message?: string } };
+        const err = (await res.json()) as { error?: { message?: string; code?: string } };
         if (err.error?.message) detail = err.error.message;
+        code = err.error?.code;
       } catch {
         // Not JSON; the status text will do.
       }
-      throw new HetznerApiError(res.status, `Hetzner ${method} ${path.split("?")[0]} failed (${res.status}): ${detail}`);
+      throw new HetznerApiError(
+        res.status,
+        `Hetzner ${method} ${path.split("?")[0]} failed (${res.status}): ${detail}`,
+        code,
+      );
     }
     return res;
   }

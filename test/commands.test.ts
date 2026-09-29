@@ -46,7 +46,7 @@ beforeEach(() => {
 
 describe("runEnsure", () => {
   test("creates a server with first-boot user-data and registers the runners", async () => {
-    const { outputs } = await runEnsure({ provider, github, registrar }, ensureCfg, t0);
+    const { outputs } = await runEnsure({ provider, github, registrar }, ensureCfg);
 
     expect(specs).toHaveLength(1);
     expect(specs[0]?.userData.startsWith("#cloud-config")).toBe(true);
@@ -57,13 +57,13 @@ describe("runEnsure", () => {
   });
 
   test("exposes the labels jobs should target as a JSON runs-on array", async () => {
-    const { outputs } = await runEnsure({ provider, github, registrar }, ensureCfg, t0);
+    const { outputs } = await runEnsure({ provider, github, registrar }, ensureCfg);
     expect(JSON.parse(outputs["runs_on"]!)).toEqual(["self-hosted", "vm-gh-runners", "pool-ci"]);
   });
 
   test("reuses the server on a second call and registers nothing", async () => {
-    await runEnsure({ provider, github, registrar }, ensureCfg, t0);
-    const { outputs } = await runEnsure({ provider, github, registrar }, ensureCfg, at(5));
+    await runEnsure({ provider, github, registrar }, ensureCfg);
+    const { outputs } = await runEnsure({ provider, github, registrar }, ensureCfg);
 
     expect(specs).toHaveLength(1);
     expect(outputs).toMatchObject({ created: "false", registered: "0" });
@@ -73,7 +73,6 @@ describe("runEnsure", () => {
     await runEnsure(
       { provider, github, registrar },
       { ...ensureCfg, runnerVersion: "2.321.0", extraPackages: ["build-essential"] },
-      t0,
     );
     expect(specs[0]?.userData).toContain("2.321.0");
     expect(specs[0]?.userData).toContain("build-essential");
@@ -83,7 +82,6 @@ describe("runEnsure", () => {
     await runEnsure(
       { provider, github, registrar },
       { ...ensureCfg, githubToken: "GH-SECRET", hcloudToken: "HZ-SECRET", sshPrivateKey: "KEY-SECRET" },
-      t0,
     );
     for (const secret of ["GH-SECRET", "HZ-SECRET", "KEY-SECRET"]) {
       expect(specs[0]?.userData).not.toContain(secret);

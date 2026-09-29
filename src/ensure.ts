@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { runnerName, type GithubHost } from "./github.ts";
-import { serverLabels, type Provider, type Server } from "./provider.ts";
+import { ServerExistsError, serverLabels, type Provider, type Server } from "./provider.ts";
 import type { RunnerRegistrar } from "./registrar.ts";
 
 export interface EnsureConfig {
@@ -21,49 +22,85 @@ export interface EnsureResult {
 const LIVE: ReadonlySet<Server["status"]> = new Set(["starting", "running"]);
 
 const MAX_HOSTNAME = 63;
+const HASH_LENGTH = 8;
 
 /**
- * Lowercase, hostname-safe, at most 63 chars, and stable for a given instant.
- * A long pool/repo is truncated, never the timestamp, which keeps names unique.
+ * Deterministic, hostname-safe and at most 63 chars. Being deterministic is the
+ * point: the provider refuses a second server with the same name, so of several
+ * concurrent `ensureServer` calls exactly one can create it. The readable prefix
+ * is truncated if long; the hash of the exact pool and repo keeps distinct
+ * pools and repos distinct even when their prefixes slug alike or get cut.
  */
-const serverName = (cfg: EnsureConfig, now: Date): string => {
+export const serverName = (cfg: Pick<EnsureConfig, "pool" | "repo">): string => {
   const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "").toLowerCase();
+  const hash = createHash("sha256")
+    .update(`${cfg.pool}\0${cfg.repo}`)
+    .digest("hex")
+    .slice(0, HASH_LENGTH);
   const prefix = `${slug(cfg.pool)}-${slug(cfg.repo)}`
-    .slice(0, MAX_HOSTNAME - stamp.length - 1)
-    .replace(/-+$/, "");
-  return `${prefix}-${stamp}`;
+    .slice(0, MAX_HOSTNAME - HASH_LENGTH - 1)
+    .replace(/^-+|-+$/g, "");
+  return `${prefix}-${hash}`;
 };
+
+export interface EnsureOptions {
+  /** How many times to re-check after losing a create race. Default 30. */
+  readonly conflictAttempts?: number;
+  /** Wait between re-checks. Default 10 s: enough for a deleted server to free its name. */
+  readonly conflictDelayMs?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
+}
 
 /**
  * Reuse this pool's live server for this repo, or create one.
  *
- * Callers must serialise this (a `concurrency:` group in the workflow): two
- * concurrent calls can both see no server and each create one, and the
- * provider account has a small server cap.
+ * Safe to call concurrently, from any number of workflow runs. A workflow
+ * `concurrency:` group is NOT a substitute: GitHub cancels all but the newest
+ * pending job in a group, which would fail real CI runs.
+ *
+ * Losing a race is normal, not an error: the creator that loses gets
+ * `ServerExistsError`, waits, and reuses the winner's server. The same path
+ * covers a previous server that is still being deleted and holds the name.
  */
 export const ensureServer = async (
   provider: Provider,
   cfg: EnsureConfig,
-  now: Date = new Date(),
+  options: EnsureOptions = {},
 ): Promise<EnsureResult> => {
+  const {
+    conflictAttempts = 30,
+    conflictDelayMs = 10_000,
+    sleep = (ms) => new Promise<void>((r) => setTimeout(r, ms)),
+  } = options;
   const labels = serverLabels(cfg.pool, cfg.repo);
-  const live = (await provider.listServers(labels))
-    .filter((s) => LIVE.has(s.status))
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const name = serverName(cfg);
 
-  const existing = live[0];
-  if (existing) return { server: existing, created: false };
+  for (let attempt = 1; attempt <= conflictAttempts; attempt++) {
+    const live = (await provider.listServers(labels))
+      .filter((s) => LIVE.has(s.status))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const existing = live[0];
+    if (existing) return { server: existing, created: false };
 
-  const server = await provider.createServer({
-    name: serverName(cfg, now),
-    labels,
-    serverType: cfg.serverType,
-    image: cfg.image,
-    location: cfg.location,
-    userData: cfg.userData,
-  });
-  return { server, created: true };
+    try {
+      const server = await provider.createServer({
+        name,
+        labels,
+        serverType: cfg.serverType,
+        image: cfg.image,
+        location: cfg.location,
+        userData: cfg.userData,
+      });
+      return { server, created: true };
+    } catch (e) {
+      if (!(e instanceof ServerExistsError)) throw e;
+      if (attempt < conflictAttempts) await sleep(conflictDelayMs);
+    }
+  }
+  throw new Error(
+    `a server named "${name}" already exists but is not a live server of pool "${cfg.pool}" ` +
+      `for ${cfg.repo}; gave up after ${conflictAttempts} checks`,
+  );
 };
 
 export interface EnsureReadyConfig extends EnsureConfig {
@@ -121,9 +158,9 @@ export const ensureReady = async (
   github: GithubHost,
   registrar: RunnerRegistrar,
   cfg: EnsureReadyConfig,
-  now: Date = new Date(),
+  options: EnsureOptions = {},
 ): Promise<EnsureReadyResult> => {
-  const ensured = await ensureServer(provider, cfg, now);
+  const ensured = await ensureServer(provider, cfg, options);
   const { registered } = await ensureRunners(github, registrar, ensured.server, cfg.runnerCount);
   return { ...ensured, registered };
 };

@@ -1,5 +1,5 @@
 import type { EnsureCliConfig, ReapCliConfig } from "./config.ts";
-import { ensureReady } from "./ensure.ts";
+import { ensureReady, type EnsureOptions } from "./ensure.ts";
 import type { GithubHost } from "./github.ts";
 import type { Provider } from "./provider.ts";
 import { reap, type ReapResult } from "./reap.ts";
@@ -28,7 +28,7 @@ export interface EnsureOutcome {
 export const runEnsure = async (
   deps: EnsureDeps,
   cfg: EnsureCliConfig,
-  now: Date = new Date(),
+  options: EnsureOptions = {},
 ): Promise<EnsureOutcome> => {
   const userData = buildUserData({
     runnerVersion: cfg.runnerVersion,
@@ -47,7 +47,7 @@ export const runEnsure = async (
       userData,
       runnerCount: cfg.runnerCount,
     },
-    now,
+    options,
   );
   return {
     outputs: {

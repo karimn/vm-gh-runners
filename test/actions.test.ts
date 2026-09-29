@@ -1,0 +1,177 @@
+import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { runEnsure, runReap } from "../src/commands.ts";
+import type { EnsureCliConfig } from "../src/config.ts";
+import { MockGithub } from "../src/mock-github.ts";
+import { MockProvider } from "../src/mock-provider.ts";
+import { MockRegistrar } from "../src/mock-registrar.ts";
+
+const root = join(import.meta.dir, "..");
+
+interface Step {
+  id?: string;
+  uses?: string;
+  run?: string;
+  shell?: string;
+  env?: Record<string, string>;
+}
+interface Action {
+  runs: { using: string; steps: Step[] };
+  inputs: Record<string, { required?: boolean; default?: string }>;
+  outputs: Record<string, { value: string }>;
+}
+
+const load = (dir: string): Action =>
+  Bun.YAML.parse(readFileSync(join(root, dir, "action.yml"), "utf8")) as Action;
+
+const cliStep = (a: Action): Step => a.runs.steps.find((s) => s.id === "cli")!;
+
+const configSource = readFileSync(join(root, "src/config.ts"), "utf8");
+const cliSource = readFileSync(join(root, "src/cli.ts"), "utf8");
+
+const ensureCfg: EnsureCliConfig = {
+  repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x", serverType: "t",
+  image: "i", location: "l", runnerCount: 1, labels: ["a"], runnerVersion: "latest",
+  extraPackages: [], sshKeyNames: ["k"], sshPrivateKey: "k",
+};
+
+describe.each(["ensure", "reap"])("%s/action.yml", (dir) => {
+  const action = load(dir);
+
+  test("is a composite action", () => {
+    expect(action.runs.using).toBe("composite");
+  });
+
+  test("gives every run step a shell", () => {
+    for (const s of action.runs.steps.filter((s) => s.run)) expect(s.shell).toBe("bash");
+  });
+
+  test("never interpolates inputs or secrets into a shell script", () => {
+    // ${{ }} in `run:` is pasted into the script before bash parses it, so a
+    // crafted input could run commands. Values go through `env:` instead.
+    for (const s of action.runs.steps.filter((s) => s.run)) {
+      expect(s.run).not.toMatch(/\$\{\{\s*(inputs|secrets|github\.event)/);
+    }
+  });
+
+  test("passes only environment variables the CLI actually reads", () => {
+    for (const name of Object.keys(cliStep(action).env ?? {})) {
+      const known = configSource.includes(`"${name}"`) || cliSource.includes(name) || name === "ACTION_PATH";
+      expect(known).toBe(true);
+    }
+  });
+
+  test("maps every environment variable from a declared input", () => {
+    for (const [name, value] of Object.entries(cliStep(action).env ?? {})) {
+      const m = /^\$\{\{\s*inputs\.([\w-]+)\s*\}\}$/.exec(value);
+      if (m) expect(Object.keys(action.inputs)).toContain(m[1]!);
+      else expect(name).toBe("ACTION_PATH");
+    }
+  });
+
+  test("points at a CLI file that exists", () => {
+    expect(cliStep(action).run).toContain("$ACTION_PATH/../src/cli.ts");
+    expect(existsSync(join(root, dir, "../src/cli.ts"))).toBe(true);
+  });
+});
+
+describe("ensure inputs and env", () => {
+  const action = load("ensure");
+  const env = cliStep(action).env ?? {};
+
+  test("supplies everything the CLI requires", () => {
+    for (const name of [
+      "HCLOUD_TOKEN", "VGR_GITHUB_TOKEN", "VGR_POOL", "VGR_SERVER_TYPE",
+      "VGR_SSH_KEY_NAMES", "VGR_SSH_PRIVATE_KEY",
+    ]) {
+      expect(Object.keys(env)).toContain(name);
+    }
+  });
+
+  test("marks the required inputs required", () => {
+    for (const i of ["pool", "server-type", "ssh-key-names", "ssh-private-key", "hcloud-token", "github-token"]) {
+      expect(action.inputs[i]?.required).toBe(true);
+    }
+  });
+
+  test("leaves optional inputs without a default, so the CLI's own defaults apply", () => {
+    for (const i of ["runner-count", "image", "location", "runner-labels", "runner-version", "extra-packages"]) {
+      expect(action.inputs[i]).toBeDefined();
+      expect(action.inputs[i]?.required).not.toBe(true);
+      expect(action.inputs[i]?.default).toBeUndefined();
+    }
+  });
+
+  test("exposes exactly the outputs the command produces", async () => {
+    const github = new MockGithub();
+    const { outputs } = await runEnsure(
+      { provider: new MockProvider(), github, registrar: new MockRegistrar(github) },
+      ensureCfg,
+    );
+    expect(Object.keys(action.outputs).sort()).toEqual(Object.keys(outputs).sort());
+    for (const [name, { value }] of Object.entries(action.outputs)) {
+      expect(value).toBe(`\${{ steps.cli.outputs.${name} }}`);
+    }
+  });
+});
+
+describe("reap inputs and env", () => {
+  const action = load("reap");
+  const env = cliStep(action).env ?? {};
+
+  test("supplies everything the CLI requires", () => {
+    for (const name of ["HCLOUD_TOKEN", "VGR_GITHUB_TOKEN", "VGR_POOL"]) {
+      expect(Object.keys(env)).toContain(name);
+    }
+  });
+
+  test("marks the required inputs required", () => {
+    for (const i of ["pool", "hcloud-token", "github-token"]) {
+      expect(action.inputs[i]?.required).toBe(true);
+    }
+  });
+
+  test("exposes exactly the outputs the command produces", async () => {
+    const { outputs } = await runReap(
+      { provider: new MockProvider(), github: new MockGithub() },
+      { repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x" },
+    );
+    expect(Object.keys(action.outputs).sort()).toEqual(Object.keys(outputs).sort());
+    for (const [name, { value }] of Object.entries(action.outputs)) {
+      expect(value).toBe(`\${{ steps.cli.outputs.${name} }}`);
+    }
+  });
+});
+
+describe.each([
+  ["examples/use-in-a-workflow.yml", "ensure"],
+  ["examples/reaper.yml", "reap"],
+])("%s", (file, actionDir) => {
+  const workflow = Bun.YAML.parse(readFileSync(join(root, file), "utf8")) as {
+    jobs: Record<string, { steps?: { uses?: string; with?: Record<string, string> }[] }>;
+  };
+  const step = Object.values(workflow.jobs)
+    .flatMap((j) => j.steps ?? [])
+    .find((s) => s.uses?.startsWith(`karimn/vm-gh-runners/${actionDir}@`));
+  const action = load(actionDir);
+
+  test("calls the action", () => {
+    expect(step).toBeDefined();
+  });
+
+  test("passes only inputs the action declares, and every required one", () => {
+    const given = Object.keys(step?.with ?? {});
+    for (const g of given) expect(Object.keys(action.inputs)).toContain(g);
+    for (const [name, def] of Object.entries(action.inputs)) {
+      if (def.required) expect(given).toContain(name);
+    }
+  });
+
+  test("takes every token and key from a secret, never inline", () => {
+    for (const i of ["hcloud-token", "github-token", "ssh-private-key"]) {
+      const v = step?.with?.[i];
+      if (v !== undefined) expect(v).toMatch(/^\$\{\{\s*secrets\.\w+\s*\}\}$/);
+    }
+  });
+});

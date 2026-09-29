@@ -46,7 +46,8 @@ const list = (v: string | undefined): string[] =>
 
 const integer = (env: Env, name: string, min: number, max = Infinity): number | undefined => {
   const raw = env[name];
-  if (raw === undefined) return undefined;
+  // Actions passes an unset input as an empty string, so blank means "use the default".
+  if (raw === undefined || raw.trim() === "") return undefined;
   if (!/^\d+$/.test(raw.trim()) || Number(raw) < min || Number(raw) > max) {
     throw new Error(`${name} must be an integer from ${min}${max < Infinity ? ` to ${max}` : " up"}`);
   }

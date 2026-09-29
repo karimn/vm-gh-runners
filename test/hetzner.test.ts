@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { HetznerApiError, HetznerProvider } from "../src/hetzner.ts";
-import type { CreateServerSpec } from "../src/provider.ts";
+import { ServerExistsError, type CreateServerSpec } from "../src/provider.ts";
 
 interface Recorded {
   method: string;
@@ -115,6 +115,34 @@ describe("createServer", () => {
     await expect(hz.createServer({ ...spec, name: "Has_Underscore" })).rejects.toThrow("hostname");
     await expect(hz.createServer({ ...spec, name: "a".repeat(64) })).rejects.toThrow("hostname");
     expect(requests).toHaveLength(0);
+  });
+
+  test("reports a duplicate name as ServerExistsError, which ensure relies on as its lock", async () => {
+    const { hz } = make(() => ({
+      status: 409,
+      body: { error: { code: "uniqueness_error", message: "server name is already used" } },
+    }));
+    await expect(hz.createServer(spec)).rejects.toBeInstanceOf(ServerExistsError);
+  });
+
+  test("leaves any other 409 as an API error", async () => {
+    const { hz } = make(() => ({
+      status: 409,
+      body: { error: { code: "conflict", message: "the resource has changed" } },
+    }));
+    const err = await hz.createServer(spec).catch((e) => e);
+    expect(err).toBeInstanceOf(HetznerApiError);
+    expect(err.code).toBe("conflict");
+  });
+
+  test("explains a hit on the account's server limit", async () => {
+    const { hz } = make(() => ({
+      status: 403,
+      body: { error: { code: "resource_limit_exceeded", message: "server limit reached" } },
+    }));
+    const err = await hz.createServer(spec).catch((e) => e);
+    expect(err.code).toBe("resource_limit_exceeded");
+    expect(err.message).toContain("server limit reached");
   });
 
   test("never puts the token in an error", async () => {

@@ -75,9 +75,31 @@ describe("loadEnsureConfig", () => {
   });
 
   test("rejects a runner count that is not a positive integer", () => {
-    for (const bad of ["0", "-1", "2.5", "many", ""]) {
+    for (const bad of ["0", "-1", "2.5", "many"]) {
       expect(() => loadEnsureConfig({ ...base, VGR_RUNNER_COUNT: bad })).toThrow("VGR_RUNNER_COUNT");
     }
+  });
+
+  test("treats blank optional values as unset, since Actions passes an unset input as an empty string", () => {
+    const c = loadEnsureConfig({
+      ...base,
+      VGR_RUNNER_COUNT: "",
+      VGR_IMAGE: " ",
+      VGR_LOCATION: "",
+      VGR_RUNNER_LABELS: "",
+      VGR_RUNNER_VERSION: "",
+      VGR_EXTRA_PACKAGES: "",
+      VGR_REPO: "",
+    });
+    expect(c).toMatchObject({
+      runnerCount: 3,
+      image: "ubuntu-24.04",
+      location: "nbg1",
+      labels: ["vm-gh-runners", "pool-ci"],
+      runnerVersion: "latest",
+      extraPackages: [],
+      repo: "karimn/sia",
+    });
   });
 
   test("rejects a repo that is not owner/name", () => {
@@ -111,6 +133,10 @@ describe("loadReapConfig", () => {
     const c = loadReapConfig({ ...reapBase, GITHUB_RUN_ID: "12345", VGR_WINDOW_START_MINUTE: "45" });
     expect(c.currentRunId).toBe(12345);
     expect(c.windowStartMinute).toBe(45);
+  });
+
+  test("treats a blank window start as unset", () => {
+    expect(loadReapConfig({ ...reapBase, VGR_WINDOW_START_MINUTE: "" }).windowStartMinute).toBeUndefined();
   });
 
   test("rejects a window start outside 0-59 and a non-numeric run id", () => {

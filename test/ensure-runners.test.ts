@@ -87,7 +87,7 @@ describe("ensureRunners", () => {
 describe("ensureReady", () => {
   test("creates a server and registers all its runners", async () => {
     const provider = new MockProvider(() => t0);
-    const r = await ensureReady(provider, github, registrar, cfg, t0);
+    const r = await ensureReady(provider, github, registrar, cfg);
 
     expect(r.created).toBe(true);
     expect(r.registered).toHaveLength(3);
@@ -96,10 +96,10 @@ describe("ensureReady", () => {
 
   test("on a reused server registers nothing when it is already complete", async () => {
     const provider = new MockProvider(() => t0);
-    await ensureReady(provider, github, registrar, cfg, t0);
+    await ensureReady(provider, github, registrar, cfg);
     registrar.calls.length = 0;
 
-    const r = await ensureReady(provider, github, registrar, cfg, t0);
+    const r = await ensureReady(provider, github, registrar, cfg);
     expect(r.created).toBe(false);
     expect(r.registered).toEqual([]);
     expect(registrar.calls).toEqual([]);
@@ -109,17 +109,17 @@ describe("ensureReady", () => {
     const provider = new MockProvider(() => t0);
     registrar.failWith = new Error("ssh unreachable");
 
-    await expect(ensureReady(provider, github, registrar, cfg, t0)).rejects.toThrow("ssh unreachable");
+    await expect(ensureReady(provider, github, registrar, cfg)).rejects.toThrow("ssh unreachable");
   });
 
   test("keeps a server whose registration failed and retries on it next time", async () => {
     const provider = new MockProvider(() => t0);
     registrar.failWith = new Error("ssh unreachable");
-    await expect(ensureReady(provider, github, registrar, cfg, t0)).rejects.toThrow();
+    await expect(ensureReady(provider, github, registrar, cfg)).rejects.toThrow();
     expect(provider.servers.size).toBe(1);
 
     registrar.failWith = undefined;
-    const retry = await ensureReady(provider, github, registrar, cfg, t0);
+    const retry = await ensureReady(provider, github, registrar, cfg);
     expect(retry.created).toBe(false);
     expect(provider.servers.size).toBe(1);
     expect(github.runners.size).toBe(3);
@@ -127,7 +127,7 @@ describe("ensureReady", () => {
 
   test("restores the runners a partly failed reap removed", async () => {
     const provider = new MockProvider(() => t0);
-    const first = await ensureReady(provider, github, registrar, cfg, t0);
+    const first = await ensureReady(provider, github, registrar, cfg);
 
     // A reap in the window that can remove runner 2 of 3 but not runner 3.
     const ids = [...github.runners.keys()];
@@ -137,7 +137,7 @@ describe("ensureReady", () => {
     expect(github.runners.size).toBeLessThan(3);
     github.failDeregister.clear();
 
-    const again = await ensureReady(provider, github, registrar, cfg, at(56));
+    const again = await ensureReady(provider, github, registrar, cfg);
     expect(again.created).toBe(false);
     expect(again.server.id).toBe(first.server.id);
     expect(github.runners.size).toBe(3);

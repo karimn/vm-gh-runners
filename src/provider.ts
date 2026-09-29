@@ -50,3 +50,15 @@ export const serverLabels = (pool: string, repo: string): Labels => ({
   pool,
   repo: repo.replace("/", "_"),
 });
+
+/**
+ * Thrown by `createServer` when a server with that name already exists. Names
+ * are unique per provider project, which makes a deterministic name a lock:
+ * of several concurrent creators exactly one succeeds and the rest get this.
+ */
+export class ServerExistsError extends Error {
+  constructor(readonly serverName: string) {
+    super(`a server named "${serverName}" already exists`);
+    this.name = "ServerExistsError";
+  }
+}

@@ -1,0 +1,46 @@
+# Copy into the consuming repo's .github/workflows/ and adapt.
+#
+# Run tests on a pooled VM. The first job reuses the pool's VM or creates one
+# and makes sure its runners are up; the second runs on those runners. Nothing
+# here deletes the VM: it stays for the rest of its paid hour so the next run
+# can reuse it, and the scheduled reaper (examples/reaper.yml) deletes it when
+# it goes idle.
+#
+# Secrets to add to the repo (Settings > Secrets and variables > Actions):
+#   HCLOUD_TOKEN         Hetzner project API token, read and write. Use a project just for CI.
+#   VGR_GITHUB_TOKEN     Fine-grained PAT for this repo with Administration: read and write.
+#   VGR_SSH_PRIVATE_KEY  Private key whose public half is uploaded to that Hetzner project.
+#                        A fresh key used for nothing else, with no passphrase.
+
+name: tests on a pooled VM
+
+on:
+  pull_request:
+
+jobs:
+  vm:
+    # This job only makes API calls and SSHes in briefly, so any runner will do.
+    runs-on: self-hosted
+    timeout-minutes: 30
+    outputs:
+      runs_on: ${{ steps.ensure.outputs.runs_on }}
+    steps:
+      - id: ensure
+        uses: karimn/vm-gh-runners/ensure@main
+        with:
+          pool: ci
+          server-type: cpx62
+          ssh-key-names: ci-key
+          ssh-private-key: ${{ secrets.VGR_SSH_PRIVATE_KEY }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          github-token: ${{ secrets.VGR_GITHUB_TOKEN }}
+          runner-count: 6
+          # Pin for repeatable VMs.
+          runner-version: 2.337.0
+
+  test:
+    needs: vm
+    runs-on: ${{ fromJSON(needs.vm.outputs.runs_on) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./run-tests.sh

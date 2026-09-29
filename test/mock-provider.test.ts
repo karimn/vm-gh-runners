@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MockProvider } from "../src/mock-provider.ts";
-import type { CreateServerSpec } from "../src/provider.ts";
+import { ServerExistsError, type CreateServerSpec } from "../src/provider.ts";
 
 const spec = (name: string, labels: Record<string, string>): CreateServerSpec => ({
   name,
@@ -27,6 +27,13 @@ describe("MockProvider", () => {
     const p = new MockProvider(() => t);
     const s = await p.createServer(spec("a", {}));
     expect(s.createdAt).toEqual(t);
+  });
+
+  test("refuses a second server with the same name, as a real provider does", async () => {
+    const p = new MockProvider();
+    await p.createServer(spec("dup", {}));
+    await expect(p.createServer(spec("dup", {}))).rejects.toBeInstanceOf(ServerExistsError);
+    expect(p.servers.size).toBe(1);
   });
 
   test("delete removes the server and rejects unknown ids", async () => {
