@@ -47,6 +47,27 @@ describe.each(["ensure", "reap"])("%s/action.yml", (dir) => {
     for (const s of action.runs.steps.filter((s) => s.run)) expect(s.shell).toBe("bash");
   });
 
+  test("has no ${{ }} in any description or name", () => {
+    // GitHub evaluates expressions inside action metadata, and only a few
+    // contexts exist there. A literal example such as `${{ needs.x }}` in a
+    // description made the whole action fail to load (issue #2). Describe it in
+    // words instead.
+    const offenders: string[] = [];
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) return node.forEach((n, i) => walk(n, `${path}[${i}]`));
+      if (node === null || typeof node !== "object") return;
+      for (const [key, value] of Object.entries(node)) {
+        const here = `${path}.${key}`;
+        if ((key === "description" || key === "name") && typeof value === "string" && value.includes("${{")) {
+          offenders.push(here);
+        }
+        walk(value, here);
+      }
+    };
+    walk(Bun.YAML.parse(readFileSync(join(root, dir, "action.yml"), "utf8")), dir);
+    expect(offenders).toEqual([]);
+  });
+
   test("never interpolates inputs or secrets into a shell script", () => {
     // ${{ }} in `run:` is pasted into the script before bash parses it, so a
     // crafted input could run commands. Values go through `env:` instead.

@@ -61,8 +61,10 @@ outputs:
     value: ${{ steps.cli.outputs.registered }}
   runs_on:
     description: >-
-      JSON array of labels for the jobs that should use the VM. Use it as
-      `runs-on: ${{ fromJSON(needs.<job>.outputs.runs_on) }}`.
+      JSON array of labels for the jobs that should use the VM. Pass it
+      through the fromJSON function in a later job's runs-on (see
+      examples/use-in-a-workflow.yml). It is not written out as an expression
+      here because GitHub evaluates expressions in action descriptions.
     value: ${{ steps.cli.outputs.runs_on }}
 
 runs:
