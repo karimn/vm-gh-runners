@@ -147,6 +147,22 @@ describe("registration", () => {
     expect(script.indexOf("config.sh")).toBeLessThan(script.indexOf("svc.sh start"));
   });
 
+  test("hands the workspace back to the runner user before and after every job (#4)", async () => {
+    // Container jobs run as root, so they leave root-owned files in _work that a
+    // later plain job's checkout cannot delete.
+    const { ssh, calls } = fakeSsh();
+    await build(ssh, { runnersDir: "/srv/runners" }).register(server, ["srv-1"]);
+
+    const script = calls.find((c) => c.command === "bash -s")!.stdin!;
+    const hook = "/srv/runners/srv-1/hooks/fix-ownership.sh";
+    expect(script).toContain(`chown -R 'runner':'runner' '/srv/runners/srv-1/_work'`);
+    expect(script).toContain(`'ACTIONS_RUNNER_HOOK_JOB_STARTED=${hook}'`);
+    expect(script).toContain(`'ACTIONS_RUNNER_HOOK_JOB_COMPLETED=${hook}'`);
+    expect(script).toContain(`chmod 0755 '${hook}'`);
+    // The service reads .env when it starts, so the hooks must be in place first.
+    expect(script.indexOf("ACTIONS_RUNNER_HOOK_JOB_STARTED")).toBeLessThan(script.indexOf("svc.sh start"));
+  });
+
   test("the token travels on stdin only, never in a command line", async () => {
     const { ssh, calls } = fakeSsh();
     await build(ssh).register(server, ["srv-1"]);
