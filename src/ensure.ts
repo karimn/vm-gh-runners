@@ -103,8 +103,10 @@ export interface EnsureReadyResult extends EnsureResult, EnsureRunnersResult {}
  * Reuse or create the server, then bring its runners up to `runnerCount`.
  *
  * If registration fails on a server this call just created, the server is left
- * running and the error propagates: the reaper deletes it when it goes idle
- * inside the paid-hour window, so it cannot bill indefinitely.
+ * running and the error propagates. The hour is billed from creation either
+ * way, so deleting it would save nothing; the next call reuses it and retries
+ * registration. If registration keeps failing, the reaper removes the server at
+ * the end of its paid hour and the next call starts a fresh one.
  */
 export const ensureReady = async (
   provider: Provider,

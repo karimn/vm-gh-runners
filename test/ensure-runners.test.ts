@@ -112,6 +112,19 @@ describe("ensureReady", () => {
     await expect(ensureReady(provider, github, registrar, cfg, t0)).rejects.toThrow("ssh unreachable");
   });
 
+  test("keeps a server whose registration failed and retries on it next time", async () => {
+    const provider = new MockProvider(() => t0);
+    registrar.failWith = new Error("ssh unreachable");
+    await expect(ensureReady(provider, github, registrar, cfg, t0)).rejects.toThrow();
+    expect(provider.servers.size).toBe(1);
+
+    registrar.failWith = undefined;
+    const retry = await ensureReady(provider, github, registrar, cfg, t0);
+    expect(retry.created).toBe(false);
+    expect(provider.servers.size).toBe(1);
+    expect(github.runners.size).toBe(3);
+  });
+
   test("restores the runners a partly failed reap removed", async () => {
     const provider = new MockProvider(() => t0);
     const first = await ensureReady(provider, github, registrar, cfg, t0);
