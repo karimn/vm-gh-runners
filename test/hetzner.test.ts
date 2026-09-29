@@ -37,6 +37,7 @@ const apiServer = (over: object = {}) => ({
   status: "running",
   created: "2026-01-01T00:00:00+00:00",
   labels: { pool: "ci", repo: "karimn_sia" },
+  public_net: { ipv4: { ip: "203.0.113.7" } },
   ...over,
 });
 
@@ -73,7 +74,16 @@ describe("createServer", () => {
       labels: { pool: "ci", repo: "karimn_sia" },
       createdAt: new Date("2026-01-01T00:00:00Z"),
       status: "running",
+      address: "203.0.113.7",
     });
+  });
+
+  test("leaves the address unset when the server has no public IPv4", async () => {
+    const { hz } = make(() => ({
+      status: 201,
+      body: { server: apiServer({ public_net: { ipv4: null } }) },
+    }));
+    expect((await hz.createServer(spec)).address).toBeUndefined();
   });
 
   test("injects SSH keys when configured, so a registrar can reach the VM", async () => {

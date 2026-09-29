@@ -62,6 +62,7 @@ interface ApiServer {
   status: string;
   created: string;
   labels: Labels;
+  public_net?: { ipv4?: { ip: string } | null };
 }
 
 const toServer = (s: ApiServer): Server => ({
@@ -70,6 +71,7 @@ const toServer = (s: ApiServer): Server => ({
   labels: s.labels,
   createdAt: new Date(s.created),
   status: STATUS[s.status] ?? "starting",
+  ...(s.public_net?.ipv4?.ip ? { address: s.public_net.ipv4.ip } : {}),
 });
 
 /** Hetzner Cloud adapter. */

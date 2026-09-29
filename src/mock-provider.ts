@@ -22,6 +22,7 @@ export class MockProvider implements Provider {
       labels: spec.labels,
       createdAt: this.now(),
       status: "running",
+      address: `192.0.2.${this.nextId - 1}`,
     };
     this.servers.set(server.id, server);
     return server;

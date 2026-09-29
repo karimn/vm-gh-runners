@@ -12,6 +12,8 @@ export interface Server {
   /** Creation time. Billing hours are counted from here, not from first use. */
   readonly createdAt: Date;
   readonly status: "starting" | "running" | "stopping" | "off";
+  /** Public IPv4, if the server has one. Needed to reach it over SSH. */
+  readonly address?: string;
 }
 
 export interface CreateServerSpec {
