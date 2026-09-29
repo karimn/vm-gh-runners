@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { Server } from "../src/provider.ts";
 import type { Ssh, SshResult } from "../src/ssh.ts";
 import { SshRegistrar, shq } from "../src/ssh-registrar.ts";
+import { READY_FILE } from "../src/userdata.ts";
 
 const server: Server = {
   id: "1",
@@ -62,8 +63,26 @@ describe("readiness", () => {
     await build(ssh).register(server, ["srv-1"]);
 
     expect(calls[0]?.command).toBe("cloud-init status --wait");
-    expect(calls[1]?.command).toBe("bash -s");
+    expect(calls[1]?.command).toBe(`test -f ${READY_FILE}`);
+    expect(calls[2]?.command).toBe("bash -s");
     expect(calls.every((c) => c.host === "203.0.113.7")).toBe(true);
+  });
+
+  test("refuses a server whose setup did not finish, and shows why", async () => {
+    // cloud-init exit 2 ("degraded") can hide a failed setup script, so the
+    // marker file is the real signal.
+    const { ssh, calls } = fakeSsh((c) => {
+      if (c.command === "cloud-init status --wait") return { code: 2, stdout: "", stderr: "" };
+      if (c.command.startsWith("test -f")) return { code: 1, stdout: "", stderr: "" };
+      if (c.command.startsWith("tail")) return { code: 0, stdout: "E: Unable to locate package docker.io", stderr: "" };
+      return ok;
+    });
+    const err = await build(ssh).register(server, ["srv-1"]).catch((e) => e);
+
+    expect(String(err.message)).toContain("setup did not finish");
+    expect(String(err.message)).toContain("Unable to locate package docker.io");
+    expect(calls.some((c) => c.command === "bash -s")).toBe(false);
+    expect(tokenCalls).toBe(0);
   });
 
   test("retries while SSH is not up yet (exit 255), then proceeds", async () => {

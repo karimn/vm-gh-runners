@@ -1,6 +1,7 @@
 import type { Server } from "./provider.ts";
 import type { RunnerRegistrar } from "./registrar.ts";
 import type { Ssh } from "./ssh.ts";
+import { DEFAULT_RUNNER_USER, DEFAULT_TEMPLATE_DIR, READY_FILE } from "./userdata.ts";
 
 export interface TokenSource {
   createRegistrationToken(): Promise<string>;
@@ -49,8 +50,8 @@ export class SshRegistrar implements RunnerRegistrar {
   constructor(opts: SshRegistrarOptions) {
     const o = {
       labels: ["vm-gh-runners"],
-      runnerUser: "runner",
-      runnerTemplateDir: "/opt/actions-runner",
+      runnerUser: DEFAULT_RUNNER_USER,
+      runnerTemplateDir: DEFAULT_TEMPLATE_DIR,
       runnersDir: "/home/runner/runners",
       readyAttempts: 60,
       readyDelayMs: 5000,
@@ -92,14 +93,25 @@ export class SshRegistrar implements RunnerRegistrar {
     const { readyAttempts, readyDelayMs, sleep, ssh } = this.o;
     for (let attempt = 1; attempt <= readyAttempts; attempt++) {
       const res = await ssh.exec(host, "cloud-init status --wait");
-      // 2 is "finished, with recoverable errors": the server is usable.
-      if (res.code === 0 || res.code === 2) return;
+      if (res.code === 0 || res.code === 2) return this.checkSetupFinished(host);
       if (res.code !== SSH_CONNECTION_FAILED) {
         throw new Error(`cloud-init did not finish cleanly on ${host} (exit ${res.code}): ${res.stderr.trim()}`);
       }
       if (attempt < readyAttempts) await sleep(readyDelayMs);
     }
     throw new Error(`${host} not reachable over SSH after ${readyAttempts} attempts`);
+  }
+
+  /**
+   * cloud-init exit 2 means "degraded", which is also what a failed setup
+   * script produces, so it proves nothing. The setup script's last step is to
+   * create a marker file; its absence means an install step failed.
+   */
+  private async checkSetupFinished(host: string): Promise<void> {
+    const marker = await this.o.ssh.exec(host, `test -f ${READY_FILE}`);
+    if (marker.code === 0) return;
+    const log = await this.o.ssh.exec(host, "tail -n 40 /var/log/cloud-init-output.log");
+    throw new Error(`setup did not finish on ${host}; cloud-init output:\n${log.stdout.trim()}`);
   }
 
   /**
