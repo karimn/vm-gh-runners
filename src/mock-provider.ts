@@ -5,6 +5,7 @@ import {
   type Labels,
   type Provider,
   type Server,
+  type ServerPatch,
 } from "./provider.ts";
 
 /** In-memory provider for unit tests. `now` is injectable so age is testable. */
@@ -42,5 +43,17 @@ export class MockProvider implements Provider {
   async deleteServer(id: string): Promise<void> {
     this.calls.push(`delete:${id}`);
     if (!this.servers.delete(id)) throw new Error(`no such server: ${id}`);
+  }
+
+  async updateServer(id: string, patch: ServerPatch): Promise<Server> {
+    this.calls.push(`update:${id}`);
+    const current = this.servers.get(id);
+    if (!current) throw new Error(`no such server: ${id}`);
+    if ([...this.servers.values()].some((s) => s.id !== id && s.name === patch.name)) {
+      throw new ServerExistsError(patch.name);
+    }
+    const updated: Server = { ...current, name: patch.name, labels: patch.labels };
+    this.servers.set(id, updated);
+    return updated;
   }
 }

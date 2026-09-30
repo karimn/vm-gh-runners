@@ -35,6 +35,15 @@ export interface ReapCliConfig extends CommonConfig {
   readonly currentRunId?: number;
 }
 
+export interface ReleaseCliConfig extends CommonConfig {
+  /** Private half of the project's SSH key, used to stop the runner services. */
+  readonly sshPrivateKey: string;
+  /** What `pool` is relabelled to, so reap and ensure stop seeing the server. */
+  readonly newPoolLabel: string;
+  readonly force: boolean;
+  readonly currentRunId?: number;
+}
+
 const required = (env: Env, name: string): string => {
   const v = env[name]?.trim();
   if (!v) throw new Error(`missing required environment variable ${name}`);
@@ -88,6 +97,33 @@ export const loadReapConfig = (env: Env): ReapCliConfig => {
   return {
     ...common(env),
     ...(windowStartMinute === undefined ? {} : { windowStartMinute }),
+    ...(currentRunId === undefined ? {} : { currentRunId }),
+  };
+};
+
+// The strictest common subset of cloud label rules (Hetzner's): alphanumeric
+// at both ends, `-_.` between, at most 63 chars. Checked here, before anything
+// is deregistered, so a bad label cannot fail the last step of a release.
+const LABEL_VALUE = /^[A-Za-z0-9]([A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$/;
+
+const flag = (env: Env, name: string): boolean => {
+  const raw = env[name]?.trim().toLowerCase();
+  if (raw === undefined || raw === "" || raw === "false") return false;
+  if (raw === "true") return true;
+  throw new Error(`${name} must be true or false`);
+};
+
+export const loadReleaseConfig = (env: Env): ReleaseCliConfig => {
+  const newPoolLabel = env["VGR_NEW_POOL_LABEL"]?.trim() || "released";
+  if (!LABEL_VALUE.test(newPoolLabel)) {
+    throw new Error("VGR_NEW_POOL_LABEL must be letters, digits, - _ . only, starting and ending alphanumeric, at most 63 chars");
+  }
+  const currentRunId = integer(env, "GITHUB_RUN_ID", 0);
+  return {
+    ...common(env),
+    sshPrivateKey: required(env, "VGR_SSH_PRIVATE_KEY"),
+    newPoolLabel,
+    force: flag(env, "VGR_FORCE"),
     ...(currentRunId === undefined ? {} : { currentRunId }),
   };
 };

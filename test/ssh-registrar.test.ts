@@ -190,6 +190,69 @@ describe("registration", () => {
   });
 });
 
+describe("uninstall", () => {
+  test("stops and uninstalls every runner service in one call, without waiting for cloud-init", async () => {
+    const { ssh, calls } = fakeSsh();
+    await build(ssh).uninstall(server);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.host).toBe("203.0.113.7");
+    const script = calls[0]?.stdin ?? "";
+    expect(script).toContain("/home/runner/runners");
+    expect(script).toContain("./svc.sh stop");
+    expect(script).toContain("./svc.sh uninstall");
+    expect(tokenCalls).toBe(0);
+    expect(sleeps).toHaveLength(0);
+  });
+
+  test("a failure surfaces, and names the exit code", async () => {
+    const { ssh } = fakeSsh(() => ({ code: 3, stdout: "", stderr: "unit busy" }));
+    const err = await build(ssh).uninstall(server).catch((e) => e);
+    expect(err.message).toContain("exit 3");
+    expect(err.message).toContain("unit busy");
+  });
+
+  test("the script really stops and uninstalls each installed runner, skips the rest, and fails if one fails", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "uninstall-"));
+    const runner = (name: string, svc: string, installed = true) => {
+      const dir = join(root, name);
+      mkdirSync(dir);
+      if (installed) writeFileSync(join(dir, ".service"), "x");
+      writeFileSync(join(dir, "svc.sh"), `#!/bin/bash\n${svc}\n`);
+      chmodSync(join(dir, "svc.sh"), 0o755);
+      return dir;
+    };
+    const log = join(root, "log");
+    const a = runner("a", `echo "a $1" >> ${log}`);
+    const b = runner("b", `echo "b $1" >> ${log}; [ "$1" = stop ] && exit 1 || true`);
+    const c = runner("c", `echo "c $1" >> ${log}`);
+    runner("never-installed", `echo "n $1" >> ${log}`, false);
+
+    const local: Ssh = {
+      async exec(_h, _cmd, stdin) {
+        const p = Bun.spawn(["bash", "-s"], { stdin: new TextEncoder().encode(stdin ?? ""), stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+        return { code, stdout, stderr };
+      },
+    };
+    const err = await build(local, { runnersDir: root }).uninstall(server).catch((e) => e);
+
+    expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["a stop", "a uninstall", "b stop", "c stop", "c uninstall"]);
+    expect(err.message).toContain(b);
+    expect(err.message).not.toContain(a);
+    expect(err.message).not.toContain(c);
+  });
+
+  test("needs a server address", async () => {
+    const { ssh, calls } = fakeSsh();
+    await expect(build(ssh).uninstall({ ...server, address: undefined })).rejects.toThrow("no address");
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("input validation happens before any SSH or token request", () => {
   const rejected = async (registrar: SshRegistrar, names: string[]) => {
     await expect(registrar.register(server, names)).rejects.toThrow();

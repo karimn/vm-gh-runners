@@ -1,0 +1,45 @@
+# Copy into the consuming repo's .github/workflows/. Run it by hand from the
+# Actions tab when a session wants the pool's VM for something other than CI.
+#
+# It deregisters the VM's runners, removes their services, and relabels and
+# renames the VM so the reaper and ensure no longer treat it as theirs. After
+# that NOTHING in this repo deletes it: Hetzner keeps billing until whoever
+# takes it over deletes it (use the server_id output).
+#
+# Do not run this on the pool's own runners: the job would be the busy runner it
+# refuses on. Use a GitHub-hosted runner, or any runner outside the pool. It
+# refuses while a runner is busy or other runs are active; `force` skips those
+# checks, but GitHub still will not remove a runner that is running a job.
+
+name: release the pool VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Skip the busy-runner and active-runs checks
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - id: release
+        uses: karimn/vm-gh-runners/release@main
+        with:
+          pool: ci
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          github-token: ${{ secrets.VGR_GITHUB_TOKEN }}
+          ssh-private-key: ${{ secrets.VGR_SSH_PRIVATE_KEY }}
+          new-pool-label: released
+          force: ${{ inputs.force }}
+      - run: >-
+          echo "Released server $SERVER_ID ($SERVER_NAME, $SERVER_IP).
+          It is still billed until its new owner deletes it."
+        shell: bash
+        env:
+          SERVER_ID: ${{ steps.release.outputs.server_id }}
+          SERVER_NAME: ${{ steps.release.outputs.server_name }}
+          SERVER_IP: ${{ steps.release.outputs.server_ip }}

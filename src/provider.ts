@@ -35,6 +35,18 @@ export interface Provider {
   /** Servers whose labels contain every key/value in `selector`. */
   listServers(selector: Labels): Promise<readonly Server[]>;
   deleteServer(id: string): Promise<void>;
+  /**
+   * Rename a server and replace its labels in one request, so there is no
+   * moment where it has the new name but the old labels or the reverse. `labels`
+   * is the complete new set, not a patch. Rejects with `ServerExistsError` if
+   * another server holds `name`.
+   */
+  updateServer(id: string, patch: ServerPatch): Promise<Server>;
+}
+
+export interface ServerPatch {
+  readonly name: string;
+  readonly labels: Labels;
 }
 
 export const labelsMatch = (labels: Labels, selector: Labels): boolean =>

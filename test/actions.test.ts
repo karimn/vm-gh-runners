@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runEnsure, runReap } from "../src/commands.ts";
+import { runEnsure, runReap, runRelease } from "../src/commands.ts";
 import type { EnsureCliConfig } from "../src/config.ts";
 import { MockGithub } from "../src/mock-github.ts";
 import { MockProvider } from "../src/mock-provider.ts";
@@ -36,7 +36,7 @@ const ensureCfg: EnsureCliConfig = {
   extraPackages: [], sshKeyNames: ["k"], sshPrivateKey: "k",
 };
 
-describe.each(["ensure", "reap"])("%s/action.yml", (dir) => {
+describe.each(["ensure", "reap", "release"])("%s/action.yml", (dir) => {
   const action = load(dir);
 
   test("is a composite action", () => {
@@ -165,9 +165,52 @@ describe("reap inputs and env", () => {
   });
 });
 
+describe("release inputs and env", () => {
+  const action = load("release");
+  const env = cliStep(action).env ?? {};
+
+  test("supplies everything the CLI requires", () => {
+    for (const name of ["HCLOUD_TOKEN", "VGR_GITHUB_TOKEN", "VGR_POOL", "VGR_SSH_PRIVATE_KEY"]) {
+      expect(Object.keys(env)).toContain(name);
+    }
+  });
+
+  test("marks the required inputs required, and the optional ones without a default", () => {
+    for (const i of ["pool", "hcloud-token", "github-token", "ssh-private-key"]) {
+      expect(action.inputs[i]?.required).toBe(true);
+    }
+    for (const i of ["new-pool-label", "force"]) {
+      expect(action.inputs[i]).toBeDefined();
+      expect(action.inputs[i]?.required).not.toBe(true);
+      expect(action.inputs[i]?.default).toBeUndefined();
+    }
+  });
+
+  test("says in the output descriptions that billing continues", () => {
+    expect(JSON.stringify(action)).toContain("billing");
+  });
+
+  test("exposes exactly the outputs the command produces", async () => {
+    const provider = new MockProvider();
+    const github = new MockGithub();
+    await provider.createServer({
+      name: "s", labels: { pool: "ci", repo: "karimn_sia" }, serverType: "t", image: "i", location: "l", userData: "",
+    });
+    const { outputs } = await runRelease(
+      { provider, github, registrar: new MockRegistrar(github) },
+      { repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x", sshPrivateKey: "k", newPoolLabel: "released", force: false },
+    );
+    expect(Object.keys(action.outputs).sort()).toEqual(Object.keys(outputs).sort());
+    for (const [name, { value }] of Object.entries(action.outputs)) {
+      expect(value).toBe(`\${{ steps.cli.outputs.${name} }}`);
+    }
+  });
+});
+
 describe.each([
   ["examples/use-in-a-workflow.yml", "ensure"],
   ["examples/reaper.yml", "reap"],
+  ["examples/release.yml", "release"],
 ])("%s", (file, actionDir) => {
   const workflow = Bun.YAML.parse(readFileSync(join(root, file), "utf8")) as {
     jobs: Record<string, { steps?: { uses?: string; with?: Record<string, string> }[] }>;

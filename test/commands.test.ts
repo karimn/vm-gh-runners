@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { formatReapResults, runEnsure, runReap, toGithubOutput } from "../src/commands.ts";
+import { formatReapResults, formatReleaseResult, runEnsure, runReap, runRelease, toGithubOutput } from "../src/commands.ts";
 import type { EnsureCliConfig } from "../src/config.ts";
 import { MockGithub } from "../src/mock-github.ts";
 import { MockProvider } from "../src/mock-provider.ts";
@@ -157,5 +157,62 @@ describe("toGithubOutput", () => {
 
   test("refuses a value with a newline, which could forge another output", () => {
     expect(() => toGithubOutput({ a: "x\nb=evil" })).toThrow("newline");
+  });
+});
+
+describe("runRelease", () => {
+  const cfg = {
+    repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x", sshPrivateKey: "k",
+    newPoolLabel: "released", force: false, currentRunId: 9,
+  };
+
+  const addServer = () =>
+    provider.createServer({
+      name: "srv", labels: serverLabels("ci", "karimn/sia"),
+      serverType: "t", image: "i", location: "l", userData: "",
+    });
+
+  test("outputs the server id, new name and IP, and says billing continues", async () => {
+    const s = await addServer();
+    const r = await runRelease({ provider, github, registrar }, cfg);
+
+    expect(r.failed).toBe(false);
+    expect(r.outputs).toEqual({
+      server_id: s.id,
+      server_name: `released-${s.id}`,
+      server_ip: s.address!,
+    });
+    expect(r.summary).toContain("billing continues");
+    expect(r.summary).toContain("delete");
+    expect(r.summary).toContain(s.address!);
+  });
+
+  test("a refusal fails the step, names the reason and has no outputs", async () => {
+    await addServer();
+    github.activeRuns = true;
+    const r = await runRelease({ provider, github, registrar }, cfg);
+
+    expect(r.failed).toBe(true);
+    expect(r.outputs).toEqual({});
+    expect(r.summary).toContain("active-runs");
+    expect(r.summary).not.toContain("billing continues");
+  });
+
+  test("an error after runners were removed says what state the server is in", async () => {
+    await addServer();
+    registrar.failUninstallWith = new Error("ssh down");
+    const r = await runRelease({ provider, github, registrar }, cfg);
+
+    expect(r.failed).toBe(true);
+    expect(r.summary).toContain("ssh down");
+    expect(r.summary).toContain("still in the pool");
+  });
+
+  test("passes the force flag and run id through", async () => {
+    await addServer();
+    github.activeRuns = true;
+    const r = await runRelease({ provider, github, registrar }, { ...cfg, force: true });
+    expect(r.failed).toBe(false);
+    expect(formatReleaseResult({ action: "refused", reason: "no-server" })).toContain("no server");
   });
 });
