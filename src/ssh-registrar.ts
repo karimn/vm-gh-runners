@@ -89,6 +89,37 @@ export class SshRegistrar implements RunnerRegistrar {
     }
   }
 
+  /**
+   * Stops and uninstalls the service of every runner directory. The directories
+   * are found on the VM, not from GitHub's runner list, so a runner that was
+   * already deregistered (or never finished registering) is still cleaned up. A
+   * failure in one directory does not stop the others, but the call fails at the
+   * end. Does not wait for cloud-init: the server is already up and in use.
+   */
+  async uninstall(server: Server): Promise<void> {
+    const host = server.address;
+    if (!host) throw new Error(`server ${server.name} has no address to connect to`);
+
+    const res = await this.o.ssh.exec(host, "bash -s", this.uninstallScript());
+    if (res.code !== 0) {
+      throw new Error(`uninstalling runner services on ${server.name} failed (exit ${res.code}): ${res.stderr.trim()}`);
+    }
+  }
+
+  private uninstallScript(): string {
+    return `set -u
+failed=0
+for dir in ${shq(this.o.runnersDir)}/*/; do
+  [ -f "$dir/.service" ] || continue
+  if ! (cd "$dir" && ./svc.sh stop && ./svc.sh uninstall); then
+    echo "could not remove the service in $dir" >&2
+    failed=1
+  fi
+done
+exit "$failed"
+`;
+  }
+
   private async waitUntilReady(host: string): Promise<void> {
     const { readyAttempts, readyDelayMs, sleep, ssh } = this.o;
     for (let attempt = 1; attempt <= readyAttempts; attempt++) {

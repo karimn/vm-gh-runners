@@ -254,3 +254,39 @@ describe("deleteServer", () => {
     expect(requests).toHaveLength(0);
   });
 });
+
+describe("updateServer", () => {
+  const patch = { name: "released-4242", labels: { pool: "released", repo: "karimn_sia" } };
+
+  test("PUTs the name and the complete label set, and maps the response", async () => {
+    const { hz, requests } = make(() => ({ body: { server: apiServer({ name: patch.name, labels: patch.labels }) } }));
+    const s = await hz.updateServer("4242", patch);
+
+    expect(requests[0]?.method).toBe("PUT");
+    expect(requests[0]?.url.pathname).toBe("/v1/servers/4242");
+    expect(requests[0]?.body).toEqual(patch);
+    expect(s.name).toBe("released-4242");
+    expect(s.labels).toEqual(patch.labels);
+    expect(s.address).toBe("203.0.113.7");
+  });
+
+  test("rejects an invalid name, label or id before any request", async () => {
+    const { hz, requests } = make(() => ({ body: {} }));
+    await expect(hz.updateServer("4242", { ...patch, name: "Not_Valid" })).rejects.toThrow("hostname");
+    await expect(hz.updateServer("4242", { ...patch, labels: { pool: "has space" } })).rejects.toThrow("label");
+    await expect(hz.updateServer("../x", patch)).rejects.toThrow("id");
+    expect(requests).toHaveLength(0);
+  });
+
+  test("reports a taken name as ServerExistsError", async () => {
+    const { hz } = make(() => ({ status: 409, body: { error: { code: "uniqueness_error", message: "name is already used" } } }));
+    await expect(hz.updateServer("4242", patch)).rejects.toBeInstanceOf(ServerExistsError);
+  });
+
+  test("a missing server is an error, not a silent success", async () => {
+    const { hz } = make(() => ({ status: 404, body: { error: { code: "not_found", message: "server not found" } } }));
+    const err = await hz.updateServer("4242", patch).catch((e) => e);
+    expect(err).toBeInstanceOf(HetznerApiError);
+    expect(err.status).toBe(404);
+  });
+});

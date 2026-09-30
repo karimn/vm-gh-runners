@@ -25,6 +25,7 @@ const setup = () => {
   const factory: Factory = {
     ensure: async () => ({ provider, github, registrar, dispose: () => {} }),
     reap: async () => ({ provider, github, dispose: () => {} }),
+    release: async () => ({ provider, github, registrar, dispose: () => {} }),
   };
   const dir = mkdtempSync(join(tmpdir(), "cli-test-"));
   const out = join(dir, "github_output");
@@ -52,6 +53,39 @@ describe("main", () => {
     expect(code).toBe(0);
     expect(t.lines.join("\n")).toContain("no servers in this pool");
     expect(readFileSync(t.out, "utf8")).toContain("deleted=0");
+  });
+
+  test("release hands the server over, logs the warning and writes outputs", async () => {
+    const t = setup();
+    await t.provider.createServer({
+      name: "srv", labels: { pool: "ci", repo: "karimn_sia" },
+      serverType: "t", image: "i", location: "l", userData: "",
+    });
+    const code = await main(["release"], { ...env, GITHUB_OUTPUT: t.out }, t.factory, t.log);
+
+    expect(code).toBe(0);
+    expect(t.lines.join("\n")).toContain("billing continues");
+    const written = readFileSync(t.out, "utf8");
+    expect(written).toContain("server_id=1");
+    expect(written).toContain("server_name=released-1");
+    expect(written).toContain("server_ip=192.0.2.1");
+  });
+
+  test("release exits 1 when there is nothing to release", async () => {
+    const t = setup();
+    expect(await main(["release"], env, t.factory, t.log)).toBe(1);
+    expect(t.lines.join("\n")).toContain("no server");
+  });
+
+  test("release disposes what the factory built", async () => {
+    const t = setup();
+    let disposed = false;
+    const factory: Factory = {
+      ...t.factory,
+      release: async () => ({ provider: t.provider, github: t.github, registrar: new MockRegistrar(t.github), dispose: () => { disposed = true; } }),
+    };
+    await main(["release"], env, factory, t.log);
+    expect(disposed).toBe(true);
   });
 
   test("works without GITHUB_OUTPUT", async () => {
@@ -91,6 +125,7 @@ describe("main", () => {
     const factory: Factory = {
       ensure: t.factory.ensure,
       reap: async () => ({ provider, github: t.github, dispose: () => {} }),
+      release: t.factory.release,
     };
 
     expect(await main(["reap"], env, factory, t.log)).toBe(1);
@@ -102,7 +137,7 @@ describe("main", () => {
     const factory: Factory = {
       ...t.factory,
       ensure: async () => ({
-        provider: { ...t.provider, createServer: () => { throw new Error("boom"); }, listServers: async () => [], deleteServer: async () => {} },
+        provider: { ...t.provider, createServer: () => { throw new Error("boom"); }, listServers: async () => [], deleteServer: async () => {}, updateServer: async () => { throw new Error("unused"); } },
         github: t.github,
         registrar: new MockRegistrar(t.github),
         dispose: () => { disposed = true; },

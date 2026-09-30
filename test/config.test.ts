@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { loadEnsureConfig, loadReapConfig } from "../src/config.ts";
+import { loadEnsureConfig, loadReapConfig, loadReleaseConfig } from "../src/config.ts";
 
 const base = {
   GITHUB_REPOSITORY: "karimn/sia",
@@ -143,5 +143,56 @@ describe("loadReapConfig", () => {
     expect(() => loadReapConfig({ ...reapBase, VGR_WINDOW_START_MINUTE: "60" })).toThrow("VGR_WINDOW_START_MINUTE");
     expect(() => loadReapConfig({ ...reapBase, VGR_WINDOW_START_MINUTE: "abc" })).toThrow("VGR_WINDOW_START_MINUTE");
     expect(() => loadReapConfig({ ...reapBase, GITHUB_RUN_ID: "abc" })).toThrow("GITHUB_RUN_ID");
+  });
+});
+
+describe("loadReleaseConfig", () => {
+  const relBase = {
+    GITHUB_REPOSITORY: "karimn/sia",
+    VGR_POOL: "ci",
+    HCLOUD_TOKEN: "hz-secret",
+    VGR_GITHUB_TOKEN: "gh-secret",
+    VGR_SSH_PRIVATE_KEY: "PRIVATE-KEY-BODY",
+  };
+
+  test("defaults the new pool label to released and force to off", () => {
+    expect(loadReleaseConfig(relBase)).toEqual({
+      repo: "karimn/sia",
+      pool: "ci",
+      hcloudToken: "hz-secret",
+      githubToken: "gh-secret",
+      sshPrivateKey: "PRIVATE-KEY-BODY",
+      newPoolLabel: "released",
+      force: false,
+    });
+  });
+
+  test("needs the SSH key, and names it when missing", () => {
+    const { VGR_SSH_PRIVATE_KEY: _, ...rest } = relBase;
+    expect(() => loadReleaseConfig(rest)).toThrow("VGR_SSH_PRIVATE_KEY");
+  });
+
+  test("reads the new label, force and the current run id; blanks mean unset", () => {
+    const c = loadReleaseConfig({ ...relBase, VGR_NEW_POOL_LABEL: "sia-dev", VGR_FORCE: "true", GITHUB_RUN_ID: "77" });
+    expect(c).toMatchObject({ newPoolLabel: "sia-dev", force: true, currentRunId: 77 });
+    expect(loadReleaseConfig({ ...relBase, VGR_NEW_POOL_LABEL: " ", VGR_FORCE: "" })).toMatchObject({
+      newPoolLabel: "released",
+      force: false,
+    });
+  });
+
+  test("force is strictly true or false", () => {
+    expect(() => loadReleaseConfig({ ...relBase, VGR_FORCE: "yes" })).toThrow("VGR_FORCE");
+  });
+
+  test("rejects a new pool label the provider would refuse, before anything is touched", () => {
+    for (const bad of ["has space", "-lead", "a,b", "x".repeat(64)]) {
+      expect(() => loadReleaseConfig({ ...relBase, VGR_NEW_POOL_LABEL: bad })).toThrow("VGR_NEW_POOL_LABEL");
+    }
+  });
+
+  test("errors never contain a secret value", () => {
+    const err = (() => { try { loadReleaseConfig({ ...relBase, VGR_FORCE: "nope" }); } catch (e) { return String(e); } return ""; })();
+    for (const s of ["hz-secret", "gh-secret", "PRIVATE-KEY-BODY"]) expect(err).not.toContain(s);
   });
 });

@@ -1,0 +1,64 @@
+name: vm-gh-runners release
+description: >-
+  Hand the pool's server to another owner. Deregisters its runners, removes the
+  runner services, and relabels and renames the server so reap and ensure no
+  longer see it. Hetzner billing continues until the new owner deletes the
+  server; nothing in this repo will.
+
+inputs:
+  pool:
+    description: The pool whose server to release. Must match the one given to ensure.
+    required: true
+  hcloud-token:
+    description: Hetzner project API token (read and write). Pass it from a secret.
+    required: true
+  github-token:
+    description: >-
+      Token that can manage this repo's runners (fine-grained PAT with
+      Administration read and write). Pass it from a secret.
+    required: true
+  ssh-private-key:
+    description: >-
+      Private half of the SSH key the server was created with, used to stop the
+      runner services. Pass it from a secret.
+    required: true
+  new-pool-label:
+    description: >-
+      Value the server's pool label is changed to, so reap and ensure stop
+      matching it. Defaults to released. Must differ from the pool, and must not
+      be the name of a pool that is still in use.
+    required: false
+  force:
+    description: >-
+      Set to true to skip the checks for a busy runner and other active runs in
+      the repo. GitHub still refuses to remove a runner that is running a job.
+    required: false
+
+outputs:
+  server_id:
+    description: The released server's provider id. Its new owner needs it to delete the server.
+    value: ${{ steps.cli.outputs.server_id }}
+  server_name:
+    description: The server's new name. The old deterministic name is free again.
+    value: ${{ steps.cli.outputs.server_name }}
+  server_ip:
+    description: The server's public IPv4 address. Billing continues until the new owner deletes the server.
+    value: ${{ steps.cli.outputs.server_ip }}
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.3.13
+    - id: cli
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+        VGR_GITHUB_TOKEN: ${{ inputs.github-token }}
+        VGR_POOL: ${{ inputs.pool }}
+        VGR_SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
+        VGR_NEW_POOL_LABEL: ${{ inputs.new-pool-label }}
+        VGR_FORCE: ${{ inputs.force }}
+      run: bun "$ACTION_PATH/../src/cli.ts" release

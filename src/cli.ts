@@ -3,17 +3,21 @@ import {
   formatReapResults,
   runEnsure,
   runReap,
+  runRelease,
   toGithubOutput,
   type EnsureDeps,
   type Outputs,
   type ReapDeps,
+  type ReleaseDeps,
 } from "./commands.ts";
 import {
   loadEnsureConfig,
   loadReapConfig,
+  loadReleaseConfig,
   type Env,
   type EnsureCliConfig,
   type ReapCliConfig,
+  type ReleaseCliConfig,
 } from "./config.ts";
 import { GithubClient } from "./github-client.ts";
 import { HetznerProvider } from "./hetzner.ts";
@@ -28,10 +32,15 @@ export interface ReapRuntime extends ReapDeps {
   dispose(): void;
 }
 
+export interface ReleaseRuntime extends ReleaseDeps {
+  dispose(): void;
+}
+
 /** Builds the real dependencies for a command. Tests substitute mocks. */
 export interface Factory {
   ensure(cfg: EnsureCliConfig): Promise<EnsureRuntime>;
   reap(cfg: ReapCliConfig): Promise<ReapRuntime>;
+  release(cfg: ReleaseCliConfig): Promise<ReleaseRuntime>;
 }
 
 export const realFactory: Factory = {
@@ -57,9 +66,20 @@ export const realFactory: Factory = {
       dispose: () => {},
     };
   },
+  async release(cfg) {
+    const key = withKeyFile(cfg.sshPrivateKey);
+    const github = new GithubClient({ repo: cfg.repo, token: cfg.githubToken });
+    return {
+      provider: new HetznerProvider({ token: cfg.hcloudToken }),
+      github,
+      // Only `uninstall` is used, which needs neither the token source nor labels.
+      registrar: new SshRegistrar({ github, repo: cfg.repo, ssh: new SystemSsh({ keyPath: key.path }) }),
+      dispose: key.dispose,
+    };
+  },
 };
 
-const USAGE = "usage: cli.ts <ensure|reap>   (configured through VGR_* environment variables)";
+const USAGE = "usage: cli.ts <ensure|reap|release>   (configured through VGR_* environment variables)";
 
 const writeOutputs = (env: Env, outputs: Outputs): void => {
   // GitHub Actions supplies this path; outside Actions there is nothing to write.
@@ -74,7 +94,7 @@ export const main = async (
   log: (line: string) => void = console.log,
 ): Promise<number> => {
   const command = argv[0];
-  if (command !== "ensure" && command !== "reap") {
+  if (command !== "ensure" && command !== "reap" && command !== "release") {
     log(USAGE);
     return 2;
   }
@@ -88,6 +108,19 @@ export const main = async (
         log(summary);
         writeOutputs(env, outputs);
         return 0;
+      } finally {
+        rt.dispose();
+      }
+    }
+
+    if (command === "release") {
+      const cfg = loadReleaseConfig(env);
+      const rt = await factory.release(cfg);
+      try {
+        const { outputs, summary, failed } = await runRelease(rt, cfg);
+        log(summary);
+        writeOutputs(env, outputs);
+        return failed ? 1 : 0;
       } finally {
         rt.dispose();
       }

@@ -6,7 +6,9 @@ import type { RunnerRegistrar } from "./registrar.ts";
 export class MockRegistrar implements RunnerRegistrar {
   readonly calls: (readonly string[])[] = [];
   private nextId = 1000;
+  readonly uninstalled: Server[] = [];
   failWith: Error | undefined;
+  failUninstallWith: Error | undefined;
 
   constructor(private readonly github: MockGithub) {}
 
@@ -20,5 +22,10 @@ export class MockRegistrar implements RunnerRegistrar {
       const id = this.nextId++;
       this.github.addRunner({ id, name, busy: false, status: "online" });
     }
+  }
+
+  async uninstall(server: Server): Promise<void> {
+    if (this.failUninstallWith) throw this.failUninstallWith;
+    this.uninstalled.push(server);
   }
 }

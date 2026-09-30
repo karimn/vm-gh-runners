@@ -14,4 +14,11 @@ import type { Server } from "./provider.ts";
  */
 export interface RunnerRegistrar {
   register(server: Server, runnerNames: readonly string[]): Promise<void>;
+  /**
+   * Stop and remove every runner service on an already-running server, so
+   * nothing on it keeps talking to GitHub. Unlike `register` it does not wait for
+   * first-boot setup. A failure rejects: a server handed over with a live runner
+   * service would be a trap for its new owner.
+   */
+  uninstall(server: Server): Promise<void>;
 }

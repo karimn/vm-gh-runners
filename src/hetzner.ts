@@ -4,6 +4,7 @@ import {
   type Labels,
   type Provider,
   type Server,
+  type ServerPatch,
 } from "./provider.ts";
 
 export class HetznerApiError extends Error {
@@ -154,6 +155,28 @@ export class HetznerProvider implements Provider {
       await this.request("DELETE", `/servers/${id}`);
     } catch (e) {
       if (e instanceof HetznerApiError && e.status === 404) return;
+      throw e;
+    }
+  }
+
+  /**
+   * Hetzner's `labels` on a PUT replaces the whole set, so the caller passes the
+   * complete set it wants. Name and labels go in one request.
+   */
+  async updateServer(id: string, patch: ServerPatch): Promise<Server> {
+    if (!/^\d+$/.test(id)) throw new Error(`invalid server id "${id}"`);
+    if (!HOSTNAME.test(patch.name)) {
+      throw new Error(`server name "${patch.name}" is not a valid hostname (lowercase, digits, -, max 63)`);
+    }
+    validateLabels(patch.labels);
+
+    try {
+      const res = await this.request("PUT", `/servers/${id}`, { name: patch.name, labels: patch.labels });
+      return toServer(((await res.json()) as { server: ApiServer }).server);
+    } catch (e) {
+      if (e instanceof HetznerApiError && e.status === 409 && e.code === "uniqueness_error") {
+        throw new ServerExistsError(patch.name);
+      }
       throw e;
     }
   }

@@ -1,8 +1,9 @@
-import type { EnsureCliConfig, ReapCliConfig } from "./config.ts";
+import type { EnsureCliConfig, ReapCliConfig, ReleaseCliConfig } from "./config.ts";
 import { ensureReady, type EnsureOptions } from "./ensure.ts";
 import type { GithubHost } from "./github.ts";
 import type { Provider } from "./provider.ts";
 import { reap, type ReapResult } from "./reap.ts";
+import { release, type ReleaseResult } from "./release.ts";
 import type { RunnerRegistrar } from "./registrar.ts";
 import { buildUserData } from "./userdata.ts";
 
@@ -17,6 +18,12 @@ export interface EnsureDeps {
 export interface ReapDeps {
   readonly provider: Provider;
   readonly github: GithubHost;
+}
+
+export interface ReleaseDeps {
+  readonly provider: Provider;
+  readonly github: GithubHost;
+  readonly registrar: RunnerRegistrar;
 }
 
 export interface EnsureOutcome {
@@ -106,6 +113,61 @@ export const formatReapResults = (results: readonly ReapResult[]): string =>
     : results
         .map((r) => `${r.name}: ${r.action} (${r.reason})${r.error ? ` ${r.error}` : ""}`)
         .join("\n");
+
+export interface ReleaseOutcome {
+  readonly result: ReleaseResult;
+  /** Empty unless the server was released. */
+  readonly outputs: Outputs;
+  readonly summary: string;
+  /** True unless the server was released: the step exists to release it. */
+  readonly failed: boolean;
+}
+
+const RELEASE_REFUSALS: Readonly<Record<string, string>> = {
+  "no-server": "no server in this pool for this repo",
+  ambiguous: "more than one server matches",
+  "not-running": "the server is not running, so its runner services cannot be stopped",
+  "same-pool": "the new pool label equals the current pool",
+  busy: "a runner on the server is busy; wait for the job or cancel it",
+  "active-runs": "the repo has other queued or in-progress runs; wait, or set force",
+  "deregister-failed": "runners could not be deregistered; the server is still in the pool (some runners may be gone, and the next ensure restores them)",
+  "uninstall-failed": "runner services could not be removed; the runners are deregistered but the server is still in the pool, so run release again or let ensure restore them",
+  "relabel-failed": "the server could not be relabelled; its runners are deregistered and their services removed, so run release again",
+};
+
+export const formatReleaseResult = (r: ReleaseResult): string => {
+  if (r.action === "released") {
+    return [
+      `released server ${r.previousName} (id ${r.serverId}) as ${r.name}`,
+      `address: ${r.address ?? "none"}`,
+      "reap and ensure no longer see it; nothing will delete it.",
+      "Hetzner billing continues until the new owner deletes the server.",
+    ].join("\n");
+  }
+  const what = RELEASE_REFUSALS[r.reason] ?? r.reason;
+  const who = r.previousName ? ` ${r.previousName}` : "";
+  return `release ${r.action === "refused" ? "refused" : "failed"} for${who || " this pool"} (${r.reason}): ${what}${r.error ? `\n${r.error}` : ""}`;
+};
+
+/** Hand the pool's server to another owner. See `release` for the steps. */
+export const runRelease = async (deps: ReleaseDeps, cfg: ReleaseCliConfig): Promise<ReleaseOutcome> => {
+  const result = await release(deps.provider, deps.github, deps.registrar, {
+    pool: cfg.pool,
+    repo: cfg.repo,
+    newPoolLabel: cfg.newPoolLabel,
+    force: cfg.force,
+    currentRunId: cfg.currentRunId,
+  });
+  const released = result.action === "released";
+  return {
+    result,
+    outputs: released
+      ? { server_id: result.serverId ?? "", server_name: result.name ?? "", server_ip: result.address ?? "" }
+      : {},
+    summary: formatReleaseResult(result),
+    failed: !released,
+  };
+};
 
 /** Lines for `$GITHUB_OUTPUT`. A newline in a value could forge a second output. */
 export const toGithubOutput = (outputs: Outputs): string =>
