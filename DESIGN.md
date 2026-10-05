@@ -127,9 +127,10 @@ rather than creating a second.
   runners that release then uninstalls; narrow, and the active-runs guard makes it
   rare. `force` cannot release a busy runner, since GitHub refuses to deregister it.
 - A server left by a crashed run is reaped at the end of its paid hour (Hetzner) or at the next reap (OVH).
-- The reaper must not run on one of the pool's own runners: it would be the busy
+- The reaper (and any teardown job) must not run on one of the pool's own runners: it would be the busy
   runner that makes reap keep the server. Pool runners are `self-hosted` like any
-  other, so the reaper's `runs-on` needs a label only non-pool runners have.
+  other, so its `runs-on` needs a label only non-pool runners have, or a
+  GitHub-hosted runner (what the OVH examples use).
 - The reaper must run at least every 5 minutes. It is cheap on a self-hosted
   runner and costly on a GitHub-hosted one (about 8,600 billed minutes a month).
 - Runners above the configured count are ignored, and stopping or off servers
