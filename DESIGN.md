@@ -401,6 +401,13 @@ restated here.
 
 ## Known races and limits
 
+- Teardown must not depend on a busy queue. On 2026-10-05 the boot test's
+  `teardown` job (GitHub-hosted `ubuntu-latest`) was never assigned a runner and was
+  cancelled after 15 minutes while its VM kept billing; a re-run of just that job
+  cleaned up. The OVH example now runs teardown on a self-hosted runner of the
+  caller's own (safe, since pool runners carry no `self-hosted`), and the scheduled
+  reaper remains the safety net for when no runner picks it up.
+
 - A run queued in the instant after the reaper's idle check but before the delete
   finds a server with no runners; its `ensure` fails and a re-run works. Narrow,
   and the in-progress-run check makes it rare.

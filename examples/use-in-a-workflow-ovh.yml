@@ -80,14 +80,19 @@ jobs:
   # Runs even if the vm job or the tests failed or were cancelled (reap with a
   # run-id is a no-op when the run has no VM). It must not run on a pool runner,
   # where it would be the busy runner that makes reap keep the server. Pool
-  # runners do not carry `self-hosted`, so a self-hosted runner of your own works
-  # too; a GitHub-hosted one is always available, about a minute billed. It must
-  # be the run's last job: with run-id, reap does not count the run itself as
-  # active, and deletes the run's VM as soon as no runner on it is busy.
+  # runners do not carry `self-hosted`, so a self-hosted runner of your own (a
+  # laptop, say) is safe here and is the better choice: teardown is the step that
+  # stops the billing, and a GitHub-hosted job can sit in GitHub's queue for many
+  # minutes, or be cancelled there, while the VM keeps billing (seen 2026-10-05: a
+  # queued teardown was cancelled after 15 minutes). A self-hosted runner that is
+  # offline waits the same way, so keep the scheduled reaper
+  # (examples/reaper-ovh.yml) as the safety net either way. It must be the run's
+  # last job: with run-id, reap does not count the run itself as active, and
+  # deletes the run's VM as soon as no runner on it is busy.
   teardown:
     needs: [vm, test]
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
       - uses: karimn/vm-gh-runners/reap@main
