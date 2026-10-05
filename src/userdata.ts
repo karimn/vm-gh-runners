@@ -33,7 +33,39 @@ const setupScript = (opts: Required<UserDataOptions>): string => `#!/usr/bin/env
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-# unattended-upgrades often holds the apt lock during first boot; wait for it.
+# A CI VM never upgrades itself (DESIGN.md "No automatic upgrades"). The stock
+# image's overdue apt-daily-upgrade.timer fires in the VM's first hour; the
+# upgrade re-executes systemd and restarts services, the runners and containerd
+# among them, killing every running job. This must precede the runner install.
+install -d /etc/needrestart/conf.d
+cat > /etc/needrestart/conf.d/50-vgr.conf <<'EOF'
+# vm-gh-runners: list services that need a restart, never restart them.
+$nrconf{restart} = 'l';
+EOF
+export NEEDRESTART_MODE=l
+# 99- so it sorts after, and overrides, the image's 20auto-upgrades.
+cat > /etc/apt/apt.conf.d/99-vgr-no-auto-upgrades <<'EOF'
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Unattended-Upgrade "0";
+EOF
+# Units may be missing on some images; that is fine, so these must not fail.
+systemctl disable --now apt-daily.timer apt-daily-upgrade.timer || true
+systemctl mask apt-daily.service apt-daily-upgrade.service unattended-upgrades.service || true
+systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service || true
+# The units use KillMode=process, so a stop can leave unattended-upgrade or
+# dpkg running on its own. Let it finish rather than kill it mid-install.
+UPGRADING='/usr/bin/unattended-upgrade|apt\\.systemd\\.daily|/usr/bin/dpkg '
+for _ in $(seq 450); do
+  pgrep -f "$UPGRADING" >/dev/null || break
+  sleep 2
+done
+if pgrep -f "$UPGRADING" >/dev/null; then
+  echo "an automatic upgrade was still running after 15 minutes" >&2
+  exit 1
+fi
+dpkg --configure -a
+
+# Something else may still hold the apt lock during first boot; wait for it.
 APT="apt-get -o DPkg::Lock::Timeout=300 -y"
 $APT update
 $APT install ${[...BASE_PACKAGES, ...opts.extraPackages].join(" ")}
