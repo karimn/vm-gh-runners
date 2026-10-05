@@ -27,8 +27,7 @@ export interface ReapResult {
   readonly error?: string;
 }
 
-// `error` servers are included so a failed build does not bill forever; the
-// same idle checks apply to them as to any other server.
+// `error` servers are included so a failed build does not bill forever.
 const REAPABLE: ReadonlySet<Server["status"]> = new Set(["starting", "running", "error"]);
 
 /**
@@ -70,25 +69,29 @@ export const reap = async (
     const base = { serverId: server.id, name: server.name };
     const mine = runnersOfServer(runners, server.name);
 
-    if (
-      !shouldReap({
-        now,
-        createdAt: server.createdAt,
-        busy: false,
-        billing: provider.billing,
-        windowStartMinute: cfg.windowStartMinute,
-      })
-    ) {
-      results.push({ ...base, action: "kept", reason: "outside-window" });
-      continue;
-    }
-    if (mine.some((r) => r.busy)) {
-      results.push({ ...base, action: "kept", reason: "busy" });
-      continue;
-    }
-    if (await repoHasActiveRuns()) {
-      results.push({ ...base, action: "kept", reason: "active-runs" });
-      continue;
+    // A server that errored cannot be running a job, and it bills, so it skips
+    // the idle checks and the paid-hour window. Its runners, if any, still go.
+    if (server.status !== "error") {
+      if (
+        !shouldReap({
+          now,
+          createdAt: server.createdAt,
+          busy: false,
+          billing: provider.billing,
+          windowStartMinute: cfg.windowStartMinute,
+        })
+      ) {
+        results.push({ ...base, action: "kept", reason: "outside-window" });
+        continue;
+      }
+      if (mine.some((r) => r.busy)) {
+        results.push({ ...base, action: "kept", reason: "busy" });
+        continue;
+      }
+      if (await repoHasActiveRuns()) {
+        results.push({ ...base, action: "kept", reason: "active-runs" });
+        continue;
+      }
     }
 
     try {

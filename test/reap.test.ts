@@ -186,11 +186,27 @@ describe("reap on a provider billed by runtime", () => {
   });
 });
 
-describe("reap on a provider billed per started hour", () => {
-  test("does not delete a server that errored before the window either, but does inside it", async () => {
+describe("reap of a server that errored", () => {
+  const errored = async () => {
     const s = await addServerWithRunners("srv");
     provider.servers.set(s.id, { ...s, status: "error" });
-    expect((await reap(provider, github, cfg, at(20)))[0]?.reason).toBe("outside-window");
-    expect((await reap(provider, github, cfg, at(55)))[0]?.action).toBe("deleted");
+  };
+
+  test("deletes it even outside the paid-hour window, since it bills and runs nothing", async () => {
+    await errored();
+    expect((await reap(provider, github, cfg, at(20)))[0]).toMatchObject({ action: "deleted", reason: "deleted" });
+    expect(provider.servers.size).toBe(0);
+  });
+
+  test("does not wait for the repo's other runs to finish", async () => {
+    await errored();
+    github.activeRuns = true;
+    expect((await reap(provider, github, cfg, at(20)))[0]?.action).toBe("deleted");
+  });
+
+  test("still deregisters its runners first", async () => {
+    await errored();
+    await reap(provider, github, cfg, at(20));
+    expect(github.runners.size).toBe(0);
   });
 });

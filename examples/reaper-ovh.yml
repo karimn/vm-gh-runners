@@ -23,6 +23,12 @@ on:
 
 jobs:
   reap:
+    # NOT a pool runner. The pool's own runners are self-hosted too, so a bare
+    # `self-hosted` can land this job on one of them; the reaper then makes that
+    # runner busy and keeps the server it is meant to delete, tick after tick.
+    # Give your own (non-pool) runners a custom label and list it here, e.g.
+    # `runs-on: [self-hosted, my-laptop]`. Pool runners carry only `self-hosted`,
+    # `vm-gh-runners` and `pool-<pool>`.
     runs-on: self-hosted
     timeout-minutes: 10
     steps:

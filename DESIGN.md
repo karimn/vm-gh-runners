@@ -127,6 +127,9 @@ rather than creating a second.
   runners that release then uninstalls; narrow, and the active-runs guard makes it
   rare. `force` cannot release a busy runner, since GitHub refuses to deregister it.
 - A server left by a crashed run is reaped at the end of its paid hour (Hetzner) or at the next reap (OVH).
+- The reaper must not run on one of the pool's own runners: it would be the busy
+  runner that makes reap keep the server. Pool runners are `self-hosted` like any
+  other, so the reaper's `runs-on` needs a label only non-pool runners have.
 - The reaper must run at least every 5 minutes. It is cheap on a self-hosted
   runner and costly on a GitHub-hosted one (about 8,600 billed minutes a month).
 - Runners above the configured count are ignored, and stopping or off servers
@@ -149,7 +152,9 @@ rather than creating a second.
 - Run the OVH adapter against a real project and check, in this order: that the
   root login works with `disable_root: false`; that the response shapes match
   the fake in `test/ovh.test.ts` (written from the OpenStack API reference, not
-  captured from OVH); that the flavor, `Ubuntu 24.04` image and `Ext-Net`
+  captured from OVH); that a server's `created` does not change between the
+  create call and ACTIVE (arbitration sorts by it, so a creator that saw a
+  different value than its rival would let both win); that the flavor, `Ubuntu 24.04` image and `Ext-Net`
   network resolve by those names; that concurrent `ensure` calls converge on one
   server; that billing really is prorated.
 - An inverse of `release`, to hand a released server back to the pool instead of
