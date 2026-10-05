@@ -14,7 +14,7 @@ const at = (m: number) => new Date(t0.getTime() + m * 60_000);
 
 const cfgFor = (runId?: string): EnsureCliConfig => ({
   repo: "karimn/sia", pool: "sia-ci", provider: { kind: "ovh", authUrl: "https://x", credentialId: "i", credentialSecret: "s", region: "R" },
-  githubToken: "x", serverType: "t", image: "i", location: "l", runnerCount: 2,
+  githubToken: "x", serverType: "t", image: "i", baseImage: "i", maxImageAgeDays: 14, location: "l", runnerCount: 2,
   labels: runId === undefined ? ["vm-gh-runners", "pool-sia-ci"] : ["vm-gh-runners", "pool-sia-ci", `run-${runId}`],
   runnerVersion: "latest", extraPackages: [], sshKeyNames: ["k"], sshPrivateKey: "k",
   ...(runId === undefined ? {} : { runId }),

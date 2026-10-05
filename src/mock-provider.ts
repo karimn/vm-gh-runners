@@ -2,6 +2,7 @@ import {
   labelsMatch,
   ServerExistsError,
   type CreateServerSpec,
+  type Image,
   type BillingModel,
   type Labels,
   type Provider,
@@ -13,7 +14,13 @@ import {
 export class MockProvider implements Provider {
   readonly servers = new Map<string, Server>();
   readonly calls: string[] = [];
+  readonly images = new Map<string, Image>();
+  /** Set to make the next `createImage` fail, after the server was stopped. */
+  failImageWith: Error | undefined;
+  /** Set to make `deleteImage` fail. */
+  failDeleteImageWith: Error | undefined;
   private nextId = 1;
+  private nextImageId = 1;
 
   constructor(
     private readonly now: () => Date = () => new Date(),
@@ -59,5 +66,27 @@ export class MockProvider implements Provider {
     const updated: Server = { ...current, name: patch.name, labels: patch.labels };
     this.servers.set(id, updated);
     return updated;
+  }
+
+  async createImage(serverId: string, name: string): Promise<Image> {
+    this.calls.push(`createImage:${name}`);
+    const current = this.servers.get(serverId);
+    if (!current) throw new Error(`no such server: ${serverId}`);
+    this.servers.set(serverId, { ...current, status: "off" });
+    if (this.failImageWith) throw this.failImageWith;
+    const image: Image = { id: `img-${this.nextImageId++}`, name, createdAt: this.now() };
+    this.images.set(image.id, image);
+    return image;
+  }
+
+  async listImages(namePrefix: string): Promise<readonly Image[]> {
+    this.calls.push("listImages");
+    return [...this.images.values()].filter((i) => i.name.startsWith(namePrefix));
+  }
+
+  async deleteImage(id: string): Promise<void> {
+    this.calls.push(`deleteImage:${id}`);
+    if (this.failDeleteImageWith) throw this.failDeleteImageWith;
+    this.images.delete(id);
   }
 }

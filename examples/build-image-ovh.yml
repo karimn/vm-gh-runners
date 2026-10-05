@@ -1,0 +1,96 @@
+# Rebuild the image `ensure` boots (image: latest-built) every week. Copy into the
+# consuming repo's .github/workflows/ next to the workflow that calls ensure.
+#
+# Why. A CI VM never upgrades itself (an upgrade restarts the runner services
+# mid-job), so the stock OVH image it boots goes stale: months of missing openssh,
+# openssl, systemd and kernel fixes. This job is where those updates are applied,
+# once a week, on a temporary VM that runs no jobs. It also bakes Docker and the
+# runner in, which takes about two minutes off every run's cold start, and can
+# pre-pull the CI container image so jobs skip that multi-GB download.
+#
+# What it costs. About 15 minutes of one small OVH server per week (billed by
+# runtime) plus the snapshot's storage, billed per GB-month: roughly the flavor's
+# disk size plus pre-pulled images, times the 2 images kept. The temporary server
+# is deleted on every path, including failure.
+#
+# Remembering to run it. Nothing to remember: the cron below does. The ensure
+# action also warns on EVERY CI run once the newest image is more than 14 days old
+# (max-image-age-days), so a failing or disabled schedule shows up in logs you
+# read anyway. GitHub notifies only the user who last edited the cron line (or
+# re-enabled the workflow) when a scheduled run fails, so do not rely on that
+# alone. In a PUBLIC repository GitHub also disables scheduled workflows after
+# 60 days without repository activity (private repositories are not affected).
+#
+# Constraints.
+#  - One repo per pool. Images are named vgr-<pool>-<yyyymmdd>, with no repo in
+#    the name, so two repos sharing a pool would boot, and prune, each other's
+#    images (with the wrong pre-pulled container). Servers are keyed by pool and
+#    repo; images are keyed by pool only.
+#  - server-type here must have a root disk no larger than ensure's flavor: the
+#    snapshot's minimum disk is the builder's disk size, and a smaller flavor
+#    refuses to boot it.
+#  - If a build is killed or times out, its temporary server is deleted by the
+#    scheduled reaper (examples/reaper-ovh.yml, same pool and location) after
+#    3 hours, not before. Run that reaper, or a lost build bills until you notice.
+#
+# In the CI workflow, add `image: latest-built` to the ensure step. With no built
+# image yet it falls back to the stock image and warns, so adding that line first
+# is safe. Run this workflow once by hand (Actions > Run workflow) to create the
+# first image.
+#
+# Secrets (the same OVH ones as the CI workflow, plus one for a private image):
+#   OVH_APPLICATION_CREDENTIAL_ID / _SECRET   Unrestricted application credential.
+#   VGR_SSH_PRIVATE_KEY                       Private half of the key pair named
+#                                             below, in the same region. The key is
+#                                             removed from the image.
+#   GHCR_PULL_TOKEN                           PAT with read:packages, only if a
+#                                             pre-pulled image is private. It is used
+#                                             for the pulls and never written to disk.
+
+name: build the CI VM image
+
+on:
+  schedule:
+    # Mondays 05:17 UTC. Off the hour, when GitHub's scheduler is busiest.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+# Two builds at once would race to prune each other's images.
+concurrency:
+  group: build-vm-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Not a pool runner: pool runners are on the VMs this image feeds.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: karimn/vm-gh-runners/build-image@main
+        with:
+          # Must match the pool given to ensure: the image is vgr-<pool>-<yyyymmdd>.
+          pool: ci
+          location: US-EAST-VA-1
+          # The smallest flavor whose disk holds the OS, Docker and pre-pulled
+          # images. The image's size is that disk's size.
+          server-type: b3-8
+          ssh-key-names: ci-key
+          ssh-private-key: ${{ secrets.VGR_SSH_PRIVATE_KEY }}
+          ovh-application-credential-id: ${{ secrets.OVH_APPLICATION_CREDENTIAL_ID }}
+          ovh-application-credential-secret: ${{ secrets.OVH_APPLICATION_CREDENTIAL_SECRET }}
+          # Same pin as ensure, so the first boot has nothing to replace.
+          runner-version: 2.337.0
+          # Optional: container images the jobs would otherwise pull on every
+          # fresh VM. This value is read at each build, so it must name the tag
+          # your CI workflow uses NOW. A literal tag, as below, would be pulled
+          # again, stale, by every weekly build. If the tag is derived (a hash of
+          # a lockfile, say), compute it in an earlier step of this job the way
+          # the CI workflow does (checkout, then the same hash step), and write
+          # ${{ steps.<id>.outputs.tag }} here instead. An image that does not
+          # exist yet fails the build: it is better to know than to ship an old one.
+          prepull-images: |
+            ghcr.io/example-owner/example-ci:manifest-0123456789abcdef
+          registry-username: example-owner
+          registry-password: ${{ secrets.GHCR_PULL_TOKEN }}
+          # Newest N images kept, the new one included.
+          keep-images: 2

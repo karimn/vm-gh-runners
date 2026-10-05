@@ -40,6 +40,8 @@ describe("loadEnsureConfig", () => {
       githubToken: "gh-secret",
       serverType: "cpx62",
       image: "ubuntu-24.04",
+      baseImage: "ubuntu-24.04",
+      maxImageAgeDays: 14,
       location: "nbg1",
       runnerCount: 3,
       labels: ["vm-gh-runners", "pool-ci"],

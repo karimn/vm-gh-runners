@@ -9,7 +9,7 @@ real Hetzner or OVH project. See [DESIGN.md](DESIGN.md) for how it works and why
 
 ## Use it
 
-Three composite actions, called from CI workflows:
+Four composite actions, called from CI workflows:
 
 - [`ensure/`](ensure/action.yml) reuses or creates the pool's VM and registers its
   runners. Use its `runs_on` output as the labels of the jobs that should run there.
@@ -28,6 +28,52 @@ Three composite actions, called from CI workflows:
   busy or other runs are active (`force` skips those checks; GitHub still will not
   remove a busy runner). It needs the same SSH key as `ensure`.
   [Example](examples/release.yml).
+
+- [`build-image/`](build-image/action.yml) (OVH only) builds the image `ensure`
+  boots when given `image: latest-built`; see [Built images](#built-images).
+  [Example](examples/build-image-ovh.yml): a weekly schedule.
+
+## Built images
+
+A CI VM never upgrades itself, so the stock `Ubuntu 24.04` image it boots goes
+stale, and every run also pays a cold start installing Docker and the runner. The
+`build-image` action fixes both: it boots a temporary VM from the stock image,
+applies a full `apt-get dist-upgrade` (rebooting if required), installs Docker and
+the runner, optionally pre-pulls your CI container images, cleans the machine
+identity, snapshots it as `vgr-<pool>-<yyyymmdd>`, deletes the temporary VM, and
+keeps only the newest 2 images. `ensure` with `image: latest-built` then boots the
+newest one, skips what is already in it, and still registers the run's runners.
+With no built image yet it falls back to the stock image and the full setup, and
+warns.
+
+To wire it up in a consuming repo:
+
+1. Copy [`examples/build-image-ovh.yml`](examples/build-image-ovh.yml) into
+   `.github/workflows/`. It runs every Monday and can be run by hand. The secrets
+   are the ones the CI workflow already has; add a read-only registry token only
+   if a pre-pulled image is private.
+2. Run it once by hand (Actions, Run workflow) to make the first image.
+3. Add `image: latest-built` to the `ensure` step. Keep the `reap` schedule: it
+   also deletes a build's temporary VM if the build was killed.
+
+Nothing has to be remembered: the cron runs it, and `ensure` warns on every run
+once the newest image is older than `max-image-age-days` (default 14), so a
+failing or disabled schedule is visible in the logs you already read. GitHub emails
+only whoever last edited the cron line when a scheduled run fails, and disables
+schedules in a public repo after 60 days without repository activity.
+
+Cost: about 15 minutes of one small OVH VM a week, billed by runtime, plus the
+snapshots' storage (per GB-month, two images of about the builder flavor's disk
+size). What it saves per run is estimated in DESIGN.md "Built images".
+
+Limits to know:
+
+- One repo per pool. Images are named by pool only, so two repos sharing a pool
+  would boot and prune each other's images.
+- The builder's `server-type` must have a root disk no larger than `ensure`'s.
+- A pre-pulled image is read at build time: pass the tag in use now, not a literal
+  that goes stale.
+- Hetzner cannot build images; `latest-built` is an error there.
 
 ## Runner labels (breaking change, 2026-10-05)
 
@@ -141,7 +187,7 @@ same `provider` (and, on OVH, `location`) to all three.
 | Credential | `ovh-application-credential-id` and `-secret` | `hcloud-token` |
 | `server-type` | flavor, e.g. `b3-32` | server type, e.g. `cpx62` |
 | `location` | region, `US-EAST-VA-1` (default) | `nbg1` (default) |
-| `image` | `Ubuntu 24.04` (default) | `ubuntu-24.04` (default) |
+| `image` | `Ubuntu 24.04` (default), or `latest-built` | `ubuntu-24.04` (default) |
 | `ssh-key-names` | exactly one key pair, in the region | one or more keys in the project |
 | Billing | by runtime, so an idle VM is deleted at once | per started hour, so an idle VM is deleted in the last minutes of the paid hour |
 
@@ -162,21 +208,24 @@ On OVH `window-start-minute` does not apply and setting it is an error.
 CI VMs never upgrade themselves: first-boot setup turns off unattended-upgrades
 and stops needrestart from restarting services, because a mid-run upgrade
 restarted every runner and killed the jobs on it. See DESIGN.md "No automatic
-upgrades".
+upgrades". Updates are applied by `build-image` instead, on a VM that runs no jobs.
 
 Until there is a release tag, reference the actions as `@main`; pin to a commit
 SHA if you want them not to change under you.
 
 ## Layout
 
-- `ensure/`, `reap/`, `release/`: the composite actions.
+- `ensure/`, `reap/`, `release/`, `build-image/`: the composite actions.
 - `src/cli.ts`: the entry point they run, configured through environment variables.
 - `src/provider.ts`: the provider interface and billing model. `src/hetzner.ts` and
   `src/ovh.ts` are the adapters; `src/providers.ts` picks one from the config.
 - `src/ensure.ts`, `src/reap.ts`, `src/release.ts`: the operations.
 - `src/billing.ts`: when an idle server is deleted, given how the provider bills.
 - `src/github-client.ts`: the GitHub REST calls for runners and runs.
-- `src/ssh-registrar.ts`, `src/userdata.ts`: runner setup on the VM.
+- `src/ssh-registrar.ts`, `src/userdata.ts`: runner setup on the VM, and the
+  bake, clean and first-boot scripts.
+- `src/build-image.ts`, `src/images.ts`: the image builder, and image naming,
+  resolution and pruning.
 
 ## Development
 

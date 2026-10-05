@@ -50,6 +50,17 @@ class FakeCloud {
   ];
   networks = [{ id: uuid(700), name: "Ext-Net" }];
   deleteStatus = 204;
+  /** Snapshots (Glance private images). `savePolls` is how many GETs before a new one is active. */
+  snapshots: { id: string; name: string; status: string; created_at: string; savePolls: number }[] = [];
+  savePolls = 2;
+  /** What a snapshot becomes: active, or killed, or never finishes. */
+  snapshotOutcome: "active" | "killed" | "never" = "active";
+  /** Nova's createImage reply: a Location header (older microversions) or `image_id` in the body. */
+  snapshotReply: "location" | "body" = "location";
+  /** Server actions answered with an error instead (e.g. { "createImage": 409 }). */
+  actionFailure: Record<string, number> = {};
+  /** GETs of a stopping server before it is SHUTOFF. */
+  stopPolls = 2;
   now = () => "2026-10-05T12:00:00Z";
   private nextId = 1;
   private nextToken = 2;
@@ -101,9 +112,28 @@ class FakeCloud {
     }
     const path = url.pathname;
 
+    if (url.origin === IMAGE && path === "/v2/images" && url.searchParams.get("visibility") === "private") {
+      return this.listSnapshots(url);
+    }
     if (url.origin === IMAGE && path === "/v2/images") {
       const name = url.searchParams.get("name");
       return this.json(200, { images: this.images.filter((i) => i.name === name) });
+    }
+    const img = url.origin === IMAGE ? /^\/v2\/images\/([^/]+)$/.exec(path) : null;
+    if (img) {
+      const snap = this.snapshots.find((i) => i.id === img[1]);
+      if (!snap) return this.json(404, { message: "Image not found" });
+      if (method === "DELETE") {
+        this.snapshots.splice(this.snapshots.indexOf(snap), 1);
+        return this.json(204);
+      }
+      if (method === "GET") {
+        if (snap.status === "queued" && this.snapshotOutcome !== "never" && --snap.savePolls <= 0) {
+          snap.status = this.snapshotOutcome;
+        }
+        const { savePolls: _p, ...api } = snap;
+        return this.json(200, api);
+      }
     }
     if (url.origin === NETWORK && path === "/v2.0/networks") {
       const name = url.searchParams.get("name");
@@ -116,12 +146,13 @@ class FakeCloud {
     if (method === "POST" && rest === "/servers") return this.create(body.server);
     if (method === "GET" && rest === "/servers/detail") return this.list(url);
 
-    const m = /^\/servers\/([^/]+)(\/metadata)?$/.exec(rest);
+    const m = /^\/servers\/([^/]+)(\/metadata|\/action)?$/.exec(rest);
     if (!m) return this.json(404, {});
     const server = this.servers.find((s) => s.id === m[1]);
     if (!server) {
       return this.json(404, { itemNotFound: { message: `Instance ${m[1]} could not be found.`, code: 404 } });
     }
+    if (method === "POST" && m[2] === "/action") return this.action(server, body);
     if (method === "GET") return this.json(200, { server: this.poll(server) });
     if (method === "DELETE") {
       if (this.deleteStatus === 204) this.servers.splice(this.servers.indexOf(server), 1);
@@ -136,6 +167,39 @@ class FakeCloud {
       return this.json(200, { server: this.view(server) });
     }
     return this.json(405, {});
+  }
+
+  private action(server: FakeServer, body: any): Response {
+    const name = Object.keys(body)[0]!;
+    const failure = this.actionFailure[name];
+    if (failure) return this.json(failure, { conflictingRequest: { message: `cannot ${name}` } });
+    if (name === "os-stop") {
+      server.status = "ACTIVE";
+      server["OS-EXT-STS:task_state"] = "powering-off";
+      (server as any).stopPolls = this.stopPolls;
+      return this.json(202);
+    }
+    if (name === "createImage") {
+      if (server.status !== "SHUTOFF") return this.json(409, { conflictingRequest: { message: "server must be stopped" } });
+      const id = uuid(5000 + this.snapshots.length + 1);
+      this.snapshots.push({ id, name: body.createImage.name, status: "queued", created_at: this.now(), savePolls: this.savePolls });
+      return this.snapshotReply === "body"
+        ? this.json(202, { image_id: id })
+        : this.json(202, undefined, { location: `${IMAGE}/v2/images/${id}` });
+    }
+    return this.json(400, {});
+  }
+
+  private listSnapshots(url: URL): Response {
+    const marker = url.searchParams.get("marker");
+    const limit = Number(url.searchParams.get("limit") ?? 100);
+    const active = this.snapshots.filter((i) => i.status === "active");
+    const start = marker ? active.findIndex((i) => i.id === marker) + 1 : 0;
+    const page = active.slice(start, start + limit);
+    return this.json(200, {
+      images: page.map(({ savePolls: _p, ...api }) => api),
+      ...(start + limit < active.length ? { next: "/v2/images?marker=ignored" } : {}),
+    });
   }
 
   private create(spec: any): Response {
@@ -156,6 +220,11 @@ class FakeCloud {
   }
 
   private poll(server: FakeServer): FakeServer {
+    if ((server as any).stopPolls !== undefined && --(server as any).stopPolls <= 0) {
+      server.status = "SHUTOFF";
+      server["OS-EXT-STS:task_state"] = null;
+      delete (server as any).stopPolls;
+    }
     if (server.status === "BUILD" && this.buildOutcome !== "never" && --server.buildPolls <= 0) {
       if (this.buildOutcome === "ERROR") {
         server.status = "ERROR";
@@ -172,7 +241,7 @@ class FakeCloud {
   }
 
   private view(server: FakeServer): FakeServer {
-    const { buildPolls: _b, userData: _u, body: _body, ...api } = server;
+    const { buildPolls: _b, userData: _u, body: _body, stopPolls: _s, ...api } = server as FakeServer & { stopPolls?: number };
     return api as FakeServer;
   }
 
@@ -593,5 +662,105 @@ describe("updateServer", () => {
     const { ovh } = make();
     await expect(ovh.updateServer("nope", { name: "ok", labels: {} })).rejects.toThrow("invalid server id");
     await expect(ovh.updateServer(uuid(1), { name: "Not OK", labels: {} })).rejects.toThrow("hostname");
+  });
+});
+
+describe("images", () => {
+  const snap = (cloud: FakeCloud, name: string, created: string, status = "active", id?: string) => {
+    const entry = { id: id ?? uuid(6000 + cloud.snapshots.length), name, status, created_at: created, savePolls: 0 };
+    cloud.snapshots.push(entry);
+    return entry;
+  };
+
+  test("snapshots a stopped server and returns the image once it is active", async () => {
+    const { cloud, ovh } = make();
+    const server = await ovh.createServer(spec);
+
+    const image = await ovh.createImage(server.id, "vgr-ci-20261005");
+
+    expect(image).toMatchObject({ name: "vgr-ci-20261005", createdAt: new Date("2026-10-05T12:00:00Z") });
+    expect(cloud.snapshots).toHaveLength(1);
+    const actions = cloud.requests.filter((r) => r.url.pathname.endsWith("/action")).map((r) => Object.keys(r.body)[0]);
+    // The disk is consistent only if the server is stopped first.
+    expect(actions).toEqual(["os-stop", "createImage"]);
+    expect(cloud.servers[0]!.status).toBe("SHUTOFF");
+  });
+
+  test("reads the image id from the body when the microversion returns it there", async () => {
+    const { cloud, ovh } = make();
+    cloud.snapshotReply = "body";
+    const server = await ovh.createServer(spec);
+    expect((await ovh.createImage(server.id, "vgr-ci-20261005")).id).toBe(cloud.snapshots[0]!.id);
+  });
+
+  test("waits while the snapshot is saving", async () => {
+    const { cloud, ovh, sleeps } = make();
+    cloud.savePolls = 4;
+    const server = await ovh.createServer(spec);
+    sleeps.length = 0;
+    await ovh.createImage(server.id, "vgr-ci-20261005");
+    expect(sleeps.filter((ms) => ms === 10_000).length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("deletes the image and rejects when the snapshot is killed, so it can never be picked up", async () => {
+    const { cloud, ovh } = make();
+    cloud.snapshotOutcome = "killed";
+    const server = await ovh.createServer(spec);
+    await expect(ovh.createImage(server.id, "vgr-ci-20261005")).rejects.toThrow("killed");
+    expect(cloud.snapshots).toHaveLength(0);
+  });
+
+  test("deletes the image and rejects when it never becomes active", async () => {
+    const { cloud, ovh } = make(new FakeCloud(), { snapshotAttempts: 3 });
+    cloud.snapshotOutcome = "never";
+    const server = await ovh.createServer(spec);
+    await expect(ovh.createImage(server.id, "vgr-ci-20261005")).rejects.toThrow("not active in time");
+    expect(cloud.snapshots).toHaveLength(0);
+  });
+
+  test("rejects when the server never stops", async () => {
+    const { cloud, ovh } = make(new FakeCloud(), { snapshotAttempts: 2 });
+    cloud.stopPolls = 99;
+    const server = await ovh.createServer(spec);
+    await expect(ovh.createImage(server.id, "x")).rejects.toThrow("did not stop");
+    expect(cloud.snapshots).toHaveLength(0);
+  });
+
+  test("propagates a refused snapshot request", async () => {
+    const { cloud, ovh } = make();
+    cloud.actionFailure = { createImage: 409 };
+    const server = await ovh.createServer(spec);
+    await expect(ovh.createImage(server.id, "x")).rejects.toBeInstanceOf(OvhApiError);
+  });
+
+  test("lists only private, active images with the prefix, across pages", async () => {
+    const { cloud, ovh } = make();
+    snap(cloud, "vgr-ci-20261001", "2026-10-01T00:00:00Z");
+    snap(cloud, "vgr-ci-20261002", "2026-10-02T00:00:00Z");
+    snap(cloud, "vgr-ci-20261003", "2026-10-03T00:00:00Z");
+    snap(cloud, "vgr-other-20261003", "2026-10-03T00:00:00Z");
+    snap(cloud, "vgr-ci-20261004", "2026-10-04T00:00:00Z", "queued");
+
+    const names = (await ovh.listImages("vgr-ci-")).map((i) => i.name).sort();
+    expect(names).toEqual(["vgr-ci-20261001", "vgr-ci-20261002", "vgr-ci-20261003"]);
+
+    const req = cloud.requests.find((r) => r.url.pathname === "/v2/images")!;
+    expect(req.url.searchParams.get("visibility")).toBe("private");
+    expect(req.url.searchParams.get("status")).toBe("active");
+  });
+
+  test("pages through a long listing", async () => {
+    const { cloud, ovh } = make();
+    for (let i = 0; i < 150; i++) snap(cloud, `vgr-ci-${20260000 + i}`, "2026-10-01T00:00:00Z");
+    expect(await ovh.listImages("vgr-ci-")).toHaveLength(150);
+  });
+
+  test("deletes an image, and counts one that is already gone as deleted", async () => {
+    const { cloud, ovh } = make();
+    const a = snap(cloud, "vgr-ci-20261001", "2026-10-01T00:00:00Z");
+    await ovh.deleteImage(a.id);
+    expect(cloud.snapshots).toHaveLength(0);
+    await ovh.deleteImage(a.id);
+    await expect(ovh.deleteImage("nope")).rejects.toThrow("invalid image id");
   });
 });
