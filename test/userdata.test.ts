@@ -59,8 +59,50 @@ describe("buildUserData", () => {
     expect(script).toContain("set -euo pipefail");
   });
 
-  test("waits for the apt lock instead of failing against unattended upgrades", () => {
+  test("waits for the apt lock instead of failing", () => {
     expect(parse(buildUserData()).script).toContain("DPkg::Lock::Timeout");
+  });
+
+  describe("never upgrades itself (an upgrade restarted the runners mid-job)", () => {
+    const { script } = parse(buildUserData());
+    const before = (needle: string, later: string) => {
+      expect(script.indexOf(needle)).toBeGreaterThanOrEqual(0);
+      expect(script.indexOf(needle)).toBeLessThan(script.indexOf(later));
+    };
+    const steps = [
+      "$nrconf{restart} = 'l';",
+      "export NEEDRESTART_MODE=l",
+      'APT::Periodic::Unattended-Upgrade "0";',
+      'APT::Periodic::Update-Package-Lists "0";',
+      "systemctl disable --now apt-daily.timer apt-daily-upgrade.timer",
+      "systemctl mask apt-daily.service apt-daily-upgrade.service unattended-upgrades.service",
+      "systemctl stop apt-daily.service apt-daily-upgrade.service",
+      "dpkg --configure -a",
+    ];
+
+    test("disables the timers, masks the services and turns off needrestart before any install", () => {
+      for (const step of steps) {
+        before(step, "$APT update");
+        before(step, "actions-runner-linux");
+        before(step, "installdependencies.sh");
+      }
+    });
+
+    test("keeps needrestart to listing, and overrides the image's 20auto-upgrades", () => {
+      expect(script).toContain("/etc/needrestart/conf.d/50-vgr.conf");
+      expect(script).toMatch(/\/etc\/apt\/apt\.conf\.d\/99-/);
+    });
+
+    test("does not fail on an image that lacks one of the units", () => {
+      for (const line of script.split("\n").filter((l) => /^systemctl (disable|mask|stop) /.test(l))) {
+        expect(line).toEndWith("|| true");
+      }
+    });
+
+    test("waits for an upgrade already in progress, then repairs an interrupted dpkg", () => {
+      before("pgrep -f", "dpkg --configure -a");
+      expect(script).toContain("/usr/bin/unattended-upgrade");
+    });
   });
 
   test("writes the ready marker last, so it exists only if every step succeeded", () => {

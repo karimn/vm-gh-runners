@@ -54,6 +54,9 @@ scheduled workflow calls `reap`.
   dependencies, and writes a marker file last. The registrar requires the
   marker: cloud-init's "degraded" exit also appears when a setup script fails.
   A prebuilt snapshot is the later optimisation if cold starts hurt.
+- CI VMs never upgrade themselves: the setup script turns automatic upgrades off
+  before it installs anything, and applies no updates of its own. See "No
+  automatic upgrades".
 - Runners registered to a personal-account repo serve only that repo, so each
   consuming repo gets its own VM and its own secrets.
 - Servers are labelled `pool` and `repo`, and `vgr-run` when made for one run;
@@ -222,6 +225,62 @@ rather than creating a second.
   `disable_root: false`. That is a no-op on Hetzner.
 - The default image is `Ubuntu 24.04`, not `Debian 12 - Docker`: the latter ships
   docker-ce, and the setup script's `apt install docker.io` would conflict.
+
+## No automatic upgrades
+
+Found on 2026-10-05 (karimn/Sia.jl PR #328, run 37355068734, OVH Ubuntu 24.04).
+Jobs died at random with `The runner has received a shutdown signal`, from 28 s
+to 29 min into a run, on every runner of the VM at once. The runners were back
+within seconds, and a second wave sometimes followed. The VM's journal, captured
+by the teardown job before reap deleted the VM, showed this at 18:42:16 UTC:
+
+- `systemd[1]: Stopping actions.runner.karimn-Sia.jl.<name>-N.service` for all
+  six runners, `runsvc.sh: Sending SIGINT/SIGKILL to runner listener`, then
+  `Started actions.runner...` in the same second.
+- In that same second rsyslog, udevd, polkit, systemd-networkd, timesyncd,
+  resolved, ModemManager, packagekit and containerd all restarted. A containerd
+  restart also kills job containers.
+- `systemd[1]: Reexecuting requested from client PID ... ('systemctl') (unit
+  apt-daily-upgrade.service)`, five `Reloading requested ... (unit
+  apt-daily-upgrade.service)`, `apt.systemd.daily: /usr/bin/unattended-upgrade`,
+  and more restarts through 18:42:42.
+
+The cause is the stock image's `apt-daily-upgrade.timer`. It has
+`Persistent=true` and has been overdue since the image was built, and with
+`RandomizedDelaySec=60m` it fires at a random time in each fresh VM's first
+hour. unattended-upgrades then re-executes systemd. needrestart (auto mode on
+this image) restarts the services, the runner units included. Package postinst
+scripts restart their own services too (containerd, rsyslog, udev, the
+systemd-* daemons). Runs where the timer fired after the run ended passed. A
+stock VM did not reproduce the kills because it had only four kernel packages
+pending. A CI VM installs more, so it gets upgrades that restart services.
+
+So the setup script's first step is to turn this off for the VM's life. It
+does all of the following before it installs anything:
+
+- It disables the timers and masks `apt-daily`, `apt-daily-upgrade` and
+  `unattended-upgrades`, so no package install can enable them again.
+- It sets `APT::Periodic` to `0` in a `99-` file, which sorts after the image's
+  `20auto-upgrades`.
+- It stops any run already queued. These units use `KillMode=process`, so a stop
+  can leave `unattended-upgrade` or dpkg running. The script waits for those to
+  finish rather than kill dpkg mid-install, then runs `dpkg --configure -a`.
+- needrestart is set to list-only (`$nrconf{restart} = 'l'`, and
+  `NEEDRESTART_MODE=l` for the script's own apt calls).
+
+The needrestart setting is defence in depth, not the fix. It cannot stop a
+package's own postinst from restarting that package's service, and containerd's
+restart is enough to kill jobs. Do not "simplify" this down to the needrestart
+config alone.
+
+The script also applies no security updates up front. A CI VM lives under an
+hour, accepts only key-based SSH, and runs the caller's own code. An upgrade
+would add minutes to every cold start, and a kernel update would need a reboot
+to take effect. Upgrading the image is the provider's job; a prebuilt image is
+where to bake in updates if they matter.
+
+Only VMs created with this user-data are covered. A shared-pool VM created
+before the change keeps its timer until it is reaped.
 
 ## Known races and limits
 

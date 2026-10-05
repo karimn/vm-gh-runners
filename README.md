@@ -159,6 +159,11 @@ OVH setup, once per project (the same steps as pioneer's `OVH_SETUP.md`):
 
 On OVH `window-start-minute` does not apply and setting it is an error.
 
+CI VMs never upgrade themselves: first-boot setup turns off unattended-upgrades
+and stops needrestart from restarting services, because a mid-run upgrade
+restarted every runner and killed the jobs on it. See DESIGN.md "No automatic
+upgrades".
+
 Until there is a release tag, reference the actions as `@main`; pin to a commit
 SHA if you want them not to change under you.
 
