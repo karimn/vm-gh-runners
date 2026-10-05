@@ -34,8 +34,9 @@ scheduled workflow calls `reap`.
 - TypeScript on Bun, no build step, no runtime dependencies. Logic is unit-tested
   against mock providers; the actions are checked against the CLI by contract tests.
 - Scope: reusable across repos, not across CI systems.
-- Provider adapter with four operations (create with labels, list by label,
-  delete, and update name and labels together). Hetzner is the first. Label values are validated against Hetzner's
+- Provider adapter with seven operations: create with labels, list by label,
+  delete, and update name and labels together, plus create, list and delete images
+  (used by `build-image`; Hetzner's throw). Hetzner is the first. Label values are validated against Hetzner's
   rules, so `owner/name` is stored as `owner_name`.
 - Billing is per started hour, measured from server creation (Hetzner FAQ:
   "We always round up the hourly usage of a server"). The reap window is
@@ -53,7 +54,8 @@ scheduled workflow calls `reap`.
 - First-boot setup (cloud-init) installs Docker, the runner and its
   dependencies, and writes a marker file last. The registrar requires the
   marker: cloud-init's "degraded" exit also appears when a setup script fails.
-  A prebuilt snapshot is the later optimisation if cold starts hurt.
+  On a project-owned image the same script skips what the image holds; see
+  "Built images".
 - CI VMs never upgrade themselves: the setup script turns automatic upgrades off
   before it installs anything, and applies no updates of its own. See "No
   automatic upgrades".
@@ -276,13 +278,135 @@ config alone.
 The script also applies no security updates up front. A CI VM lives under an
 hour, accepts only key-based SSH, and runs the caller's own code. An upgrade
 would add minutes to every cold start, and a kernel update would need a reboot
-to take effect. Upgrading the image is the provider's job; a prebuilt image is
-where to bake in updates if they matter.
+to take effect. Updates are applied where no job runs: `build-image` upgrades a
+temporary VM once a week and snapshots it (see "Built images").
 
 Only VMs created with this user-data are covered. A shared-pool VM created
 before the change keeps its timer until it is reaped.
 
+## Built images
+
+Decided 2026-10-05, after PR #12 stopped CI VMs upgrading themselves. They boot
+OVH's stock `Ubuntu 24.04` (built 2026-05-11, about five months of openssh,
+openssl, systemd and kernel updates missing), and nothing refreshed it. Every run
+also paid a cold start in `ensure` while cloud-init installed Docker and the
+runner.
+
+**Why a VM image, not a container image.** The stale part is the host (sshd,
+kernel, openssl, systemd, the Docker daemon), and Nova boots disk images (kernel,
+bootloader, init, cloud-init), not OCI images. A job's container image never
+touches the host. So the container image goes *inside* the VM image
+(`prepull-images`), which gets both. The alternative, building a bootable disk
+from a Dockerfile's root filesystem on a GitHub-hosted runner and uploading it to
+Glance, needs no temporary OVH server, but then this repo owns the kernel,
+bootloader, cloud-init and network configuration and uploads several GB a week.
+Not chosen; revisit only if the temporary server turns out to be the problem.
+
+**The builder** (`build-image` command, `build-image/` action, `src/build-image.ts`):
+
+1. Sweep this pool's builder servers older than 3 hours (a killed earlier build).
+2. Boot a temporary server from the stock image. It is labelled `vgr-builder=<pool>`
+   and deliberately has no `pool` label, so `ensure` never adopts it and `reap`
+   never treats it as an idle CI server mid-build.
+3. Over SSH: the bake script, which is first boot's no-auto-upgrade prologue, a full
+   `apt-get dist-upgrade` (config files kept), the same provisioning first boot does
+   (packages, Docker, the `runner` user, the pinned runner's binaries and
+   dependencies in the template dir) and a last step that writes the marker
+   `/var/lib/vm-gh-runners/baked` (`runner_version=`, `built_at=`).
+4. Reboot if `/var/run/reboot-required` exists (it covers libc and systemd, not only
+   the kernel), and wait for a new boot id.
+5. Optionally pull `prepull-images`. The registry credential travels in the script
+   on SSH stdin, is used through a throwaway `DOCKER_CONFIG`, and is never in
+   user-data, a command line or the image; errors are redacted.
+6. The finalize script makes clones boot as new machines: `cloud-init clean --logs
+   --seed`, empty `/etc/machine-id`, SSH host keys removed (cloud-init regenerates
+   them), the builder's `authorized_keys`, shell history, Docker client config, apt
+   lists and the old netplan file removed. It leaves the baked marker and no
+   `ready` marker: `ready` is per VM, and a stale copy would let the registrar
+   trust a VM whose setup failed.
+7. `createImage`: the provider stops the server (a snapshot of a running disk can
+   be inconsistent), snapshots it as `vgr-<pool>-<owner>_<repo>-<yyyymmdd>` and waits until the
+   image is active. A failed or never-active snapshot is deleted, so `ensure`
+   cannot pick up a half-made image.
+8. Only then prune: keep the newest N (default 2, minimum 2) built images of the
+   pool. A failed build prunes nothing. An image that cannot be deleted fails the
+   run, so growing storage is noticed.
+9. Always delete the temporary server, on every path after it was created. If that
+   delete fails the error is loud and keeps the build's own error. A build killed
+   outright cannot clean up; its server is deleted by the next build and by `reap`
+   (which runs on a schedule in the consuming repo), after 3 hours.
+
+**`ensure`.** `image: latest-built` (OVH only; an error on Hetzner) resolves to the
+id of the newest `vgr-<pool>-<owner>_<repo>-<yyyymmdd>` image of its own pool and
+repo (the repo is spelled `owner_name`, as in server labels). The name must be the
+prefix plus exactly eight digits, so another pool or repo whose name extends this
+one's is never matched or pruned. Any other
+`image` value is used as given, and nothing is listed. With no built image, or if
+the lookup fails, it boots `base-image` (the stock image) and warns: a repo works
+before its first build and survives a Glance outage, only slower. It also warns,
+and carries on, when the newest image is older than `max-image-age-days` (default
+14, which tolerates one failed weekly build): a scheduled workflow that fails or is
+disabled then shows up on every CI run.
+
+**First boot on either image.** The user-data is identical; the script decides at
+boot by the baked marker. Without it, everything is installed as before. With it,
+the script re-asserts the no-auto-upgrade settings (they must not depend on the
+image), starts Docker, installs only caller-given `extra-packages` and a runner
+version different from the baked one (a pin; `latest` means the baked one), checks
+the template dir and the `runner` user exist (a damaged image fails here, not in
+the registrar), and writes `ready`. Registration is unchanged and still happens
+over SSH per run. A built image never applies upgrades while runners exist: the
+masked timers are in the image, and first boot masks them again before anything
+else; the only `dist-upgrade` is in the bake script. `test/boot-paths.test.ts`
+executes both scripts against stubbed commands and checks this.
+
+**What it saves.** From Sia.jl run 37355068734 (OVH, 6 runners, stock image): the
+`ensure` step took 116 s, and "Initialize containers", which is the CI image pull
+onto the fresh VM (six jobs at once, shared layers), took 31 s; run 37350552615 had
+136 s and 26 s. `test/boot-paths.test.ts` runs both first-boot scripts against
+stubbed commands: the stock path runs 16 commands, 7 of them installs or downloads
+(`apt-get update`, `apt-get install`, `curl`, `tar`, the runner's dependency
+installer, `useradd`, `usermod`); the built path runs 8 and none of those. So first
+boot no longer downloads or installs anything. How much of the 116 s that is cannot
+be split from the logs (the VM's creation and boot, and registering six runners over
+SSH, stay), and a snapshot may boot more slowly than OVH's stock image, which
+hypervisors probably cache. Estimate, not a measurement: roughly 60 to 90 s off
+`ensure` and, with the CI image pre-pulled, about 25 to 30 s off the container
+initialisation, so 1.5 to 2 minutes of a 17 to 20 minute run. The larger gain is
+that the VM is patched at all. Only a real run measures it.
+
+**Cost.** A weekly build is about 15 minutes of one small server (prorated), plus
+the snapshots' storage: per GB-month, for two images of about the builder flavor's
+disk size plus pre-pulled images. Prices are on OVH's price list and are not
+restated here.
+
+**Limits and decisions to review.**
+
+- Images are keyed by pool and repo, like servers (decided 2026-10-05; first named
+  by pool only, which would have let two repos on one pool boot and prune each
+  other's images). The builder takes the repo from `GITHUB_REPOSITORY`
+  (`VGR_REPO` overrides), so each repo that uses `latest-built` runs its own build.
+- A snapshot's minimum disk is the builder flavor's disk, so `ensure`'s flavor must
+  have at least that much.
+- Minimum retention is 2: with 1, a build could delete the image a concurrent
+  `ensure` has just resolved. A boot of an image being deleted at that instant can
+  still fail; narrow.
+- A pre-pulled image is read at build time, so the caller must pass the tag in use
+  now. A tag that does not exist fails the build rather than shipping an old image.
+- The bake script runs over one SSH session. A `dist-upgrade` that restarts sshd
+  keeps that session; if a systemd upgrade ever drops it, the build fails and
+  retries next week.
+- Hetzner is not supported: its adapter throws. A snapshot adapter would be a
+  small addition to `Provider`.
+
 ## Known races and limits
+
+- Teardown must not depend on a busy queue. On 2026-10-05 the boot test's
+  `teardown` job (GitHub-hosted `ubuntu-latest`) was never assigned a runner and was
+  cancelled after 15 minutes while its VM kept billing; a re-run of just that job
+  cleaned up. The OVH example now runs teardown on a self-hosted runner of the
+  caller's own (safe, since pool runners carry no `self-hosted`), and the scheduled
+  reaper remains the safety net for when no runner picks it up.
 
 - A run queued in the instant after the reaper's idle check but before the delete
   finds a server with no runners; its `ensure` fails and a re-run works. Narrow,
@@ -314,7 +438,8 @@ before the change keeps its timer until it is reaped.
   deletes the spare once idle.
 - OVH: a prorated idle server is deleted at the next reap, so a run that starts a
   few minutes after the last one pays a cold start (cloud-init: Docker, the
-  runner and its dependencies). A prebuilt image is the optimisation.
+  runner and its dependencies). A built image (`image: latest-built`) removes most
+  of it; see "Built images".
 - No firewall is set; SSH is key-only on an open port.
 
 ## Prior art
@@ -324,6 +449,22 @@ before the change keeps its timer until it is reaped.
 
 ## Open
 
+- Confirmed on 2026-10-05 against the real OVH US project, from throwaway runs in
+  Sia.jl (a `build-image` run, then an `ensure` on `latest-built` with one runner):
+  the build took 4 min 27 s and rebooted (the stock image had pending updates);
+  `listImages` with `visibility=private` finds the snapshot, and it was active
+  within a minute; the server created from it reached cloud-init `done` with no
+  errors, Docker active, the baked marker, the `runner` user and
+  `/opt/actions-runner`, with root SSH working for the registrar and its own SSH
+  host key; the builder's key was not left behind; `ensure` took 1 min 44 s from
+  create to registered, on a b3-8 with one runner.
+- Still unchecked: that the new server's machine-id and host key differ from the
+  builder's (both were printed, not compared); whether Nova answered `createImage`
+  with a `Location` header or `image_id` (both handled); a boot on a larger flavor
+  than the builder's (b3-32 from a b3-8 snapshot) and on a smaller one, which should
+  be refused; a build with `prepull-images`, including a private registry; and boot
+  time against the stock image, since the earlier stock timings (116 to 136 s) were
+  b3-32 with six runners and are not comparable.
 - Run the OVH adapter against a real project and check, in this order: that the
   root login works with `disable_root: false`; that the response shapes match
   the fake in `test/ovh.test.ts` (written from the OpenStack API reference, not

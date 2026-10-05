@@ -10,6 +10,7 @@ import { MockGithub } from "../src/mock-github.ts";
 import { MockProvider } from "../src/mock-provider.ts";
 import { MockRegistrar } from "../src/mock-registrar.ts";
 import type { Ssh } from "../src/ssh.ts";
+import { FakeSsh } from "./fake-ssh.ts";
 import { SshRegistrar } from "../src/ssh-registrar.ts";
 import { configInvocation } from "./config-invocation.ts";
 
@@ -32,6 +33,7 @@ const setup = () => {
     ensure: async () => ({ provider, github, registrar, dispose: () => {} }),
     reap: async () => ({ provider, github, dispose: () => {} }),
     release: async () => ({ provider, github, registrar, dispose: () => {} }),
+    buildImage: async () => ({ provider, ssh: new FakeSsh(), dispose: () => {} }),
   };
   const dir = mkdtempSync(join(tmpdir(), "cli-test-"));
   const out = join(dir, "github_output");
@@ -132,6 +134,7 @@ describe("main", () => {
       ensure: t.factory.ensure,
       reap: async () => ({ provider, github: t.github, dispose: () => {} }),
       release: t.factory.release,
+      buildImage: t.factory.buildImage,
     };
 
     expect(await main(["reap"], env, factory, t.log)).toBe(1);
@@ -143,7 +146,7 @@ describe("main", () => {
     const factory: Factory = {
       ...t.factory,
       ensure: async () => ({
-        provider: { ...t.provider, createServer: () => { throw new Error("boom"); }, listServers: async () => [], deleteServer: async () => {}, updateServer: async () => { throw new Error("unused"); } },
+        provider: { ...t.provider, createServer: () => { throw new Error("boom"); }, listServers: async () => [], deleteServer: async () => {}, updateServer: async () => { throw new Error("unused"); }, createImage: async () => { throw new Error("unused"); }, listImages: async () => [], deleteImage: async () => {} },
         github: t.github,
         registrar: new MockRegistrar(t.github),
         dispose: () => { disposed = true; },
@@ -190,6 +193,7 @@ describe("main with the ovh provider", () => {
       ensure: async (cfg) => (seen.push(cfg.provider), t.factory.ensure(cfg)),
       reap: async (cfg) => (seen.push(cfg.provider), t.factory.reap(cfg)),
       release: async (cfg) => (seen.push(cfg.provider), t.factory.release(cfg)),
+      buildImage: t.factory.buildImage,
     };
     await main(["ensure"], ovhEnv, factory, t.log);
     await main(["reap"], ovhEnv, factory, t.log);

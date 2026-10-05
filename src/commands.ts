@@ -1,6 +1,8 @@
-import type { EnsureCliConfig, ReapCliConfig, ReleaseCliConfig } from "./config.ts";
+import { buildImage, sweepStaleBuilders, type BuildImageDeps, type BuildImageOptions, type BuildImageResult } from "./build-image.ts";
+import type { BuildImageCliConfig, EnsureCliConfig, ReapCliConfig, ReleaseCliConfig } from "./config.ts";
 import { ensureReady, type EnsureOptions } from "./ensure.ts";
 import type { GithubHost } from "./github.ts";
+import { BUILT_IMAGE_REF, resolveImage, type ResolvedImage } from "./images.ts";
 import type { Provider } from "./provider.ts";
 import { reap, type ReapResult } from "./reap.ts";
 import { release, type ReleaseResult } from "./release.ts";
@@ -31,16 +33,60 @@ export interface EnsureOutcome {
   readonly summary: string;
 }
 
+export interface RunEnsureOptions extends EnsureOptions {
+  readonly now?: () => Date;
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Resolves `latest-built`, and says what a human should know about the result.
+ * A lookup that fails falls back to the stock image rather than failing the run:
+ * the stock image works, only slower, and the warning says why.
+ */
+const imageFor = async (
+  provider: Provider,
+  cfg: EnsureCliConfig,
+  now: Date,
+): Promise<{ resolved: ResolvedImage; notes: string[] }> => {
+  const notes: string[] = [];
+  let resolved: ResolvedImage;
+  try {
+    resolved = await resolveImage(provider, cfg);
+  } catch (e) {
+    notes.push(
+      `::warning::could not look up built images (${e instanceof Error ? e.message : String(e)}); booting the stock image with the full setup`,
+    );
+    return { resolved: { image: cfg.baseImage, built: false }, notes };
+  }
+  if (cfg.image === BUILT_IMAGE_REF && !resolved.built) {
+    notes.push(
+      `::warning::no built image for pool "${cfg.pool}"; booting the stock image with the full setup (about 2 minutes slower). Run the build-image workflow.`,
+    );
+  }
+  if (resolved.builtAt) {
+    const days = Math.floor((now.getTime() - resolved.builtAt.getTime()) / DAY_MS);
+    if (days > cfg.maxImageAgeDays) {
+      notes.push(
+        `::warning::the newest built image ${resolved.name} is ${days} days old (limit ${cfg.maxImageAgeDays}): is the scheduled build-image workflow failing or disabled?`,
+      );
+    }
+  }
+  return { resolved, notes };
+};
+
 /** Reuse or create the pool's server for the repo and bring its runners up. */
 export const runEnsure = async (
   deps: EnsureDeps,
   cfg: EnsureCliConfig,
-  options: EnsureOptions = {},
+  options: RunEnsureOptions = {},
 ): Promise<EnsureOutcome> => {
   const userData = buildUserData({
     runnerVersion: cfg.runnerVersion,
     extraPackages: cfg.extraPackages,
   });
+  const { now = () => new Date(), ...ensureOptions } = options;
+  const { resolved, notes } = await imageFor(deps.provider, cfg, now());
   const r = await ensureReady(
     deps.provider,
     deps.github,
@@ -49,13 +95,13 @@ export const runEnsure = async (
       pool: cfg.pool,
       repo: cfg.repo,
       serverType: cfg.serverType,
-      image: cfg.image,
+      image: resolved.image,
       location: cfg.location,
       userData,
       runnerCount: cfg.runnerCount,
       runId: cfg.runId,
     },
-    options,
+    ensureOptions,
   );
   return {
     outputs: {
@@ -66,10 +112,61 @@ export const runEnsure = async (
       // Feed straight into `runs-on: ${{ fromJSON(...) }}` so callers hard-code nothing.
       // Exactly the runners' labels: they carry no `self-hosted` (see SshRegistrar).
       runs_on: JSON.stringify(cfg.labels),
+      // Empty for a reused server: it keeps whatever image it booted, not this one.
+      image: r.created ? (resolved.name ?? resolved.image) : "",
+      image_built: r.created ? String(resolved.built) : "",
     },
-    summary:
+    summary: [
       `server ${r.server.name} (${r.server.id}): ${r.created ? "created" : "reused"}; ` +
-      `registered ${r.registered.length} runner(s)`,
+        `registered ${r.registered.length} runner(s)`,
+      // Only a created server booted an image; a reused one keeps the one it has.
+      ...(r.created ? [`image: ${resolved.name ?? resolved.image}${resolved.built ? " (built)" : ""}`] : []),
+      ...notes,
+    ].join("\n"),
+  };
+};
+
+export interface BuildImageOutcome {
+  readonly result: BuildImageResult;
+  readonly outputs: Outputs;
+  readonly summary: string;
+  /** True if the image was built but older ones could not all be deleted: storage would grow unnoticed. */
+  readonly failed: boolean;
+}
+
+/** Build the pool's image and prune the old ones. See `buildImage`. */
+export const runBuildImage = async (
+  deps: BuildImageDeps,
+  cfg: BuildImageCliConfig,
+  options: BuildImageOptions = {},
+): Promise<BuildImageOutcome> => {
+  const result = await buildImage(
+    deps,
+    {
+      pool: cfg.pool,
+      repo: cfg.repo,
+      serverType: cfg.serverType,
+      baseImage: cfg.baseImage,
+      location: cfg.location,
+      runnerVersion: cfg.runnerVersion,
+      extraPackages: cfg.extraPackages,
+      prepullImages: cfg.prepullImages,
+      registry: cfg.registry,
+      keep: cfg.keep,
+    },
+    options,
+  );
+  const { failed, deleted } = result.pruned;
+  return {
+    result,
+    outputs: { image_id: result.imageId, image_name: result.imageName, pruned: String(deleted.length) },
+    summary: [
+      `built image ${result.imageName} (${result.imageId})${result.rebooted ? " after a reboot" : ""}`,
+      ...(result.sweptBuilders.length > 0 ? [`deleted stale builder server(s): ${result.sweptBuilders.join(", ")}`] : []),
+      `pruned ${deleted.length} older image(s)${deleted.length > 0 ? `: ${deleted.join(", ")}` : ""}`,
+      ...failed.map((f) => `could not delete image ${f.name} (${f.id}): ${f.error}`),
+    ].join("\n"),
+    failed: failed.length > 0,
   };
 };
 
@@ -89,6 +186,19 @@ export const runReap = async (
   cfg: ReapCliConfig,
   now: Date = new Date(),
 ): Promise<ReapOutcome> => {
+  // A killed build-image run leaves its temporary server; this is the schedule that catches it.
+  // Its failure must not stop the real reap, but it is reported, since a builder bills.
+  const sweepFailure: ReapResult[] = [];
+  const stale = await sweepStaleBuilders(deps.provider, cfg.pool, now).catch((e: unknown) => {
+    sweepFailure.push({
+      serverId: "",
+      name: "(stale builder sweep)",
+      action: "error",
+      reason: "delete-failed",
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return [] as readonly string[];
+  });
   const results = await reap(
     deps.provider,
     deps.github,
@@ -102,9 +212,14 @@ export const runReap = async (
     },
     now,
   );
-  const count = (action: ReapResult["action"]) => results.filter((r) => r.action === action).length;
+  const all: readonly ReapResult[] = [
+    ...stale.map((name): ReapResult => ({ serverId: "", name, action: "deleted", reason: "stale-builder" })),
+    ...sweepFailure,
+    ...results,
+  ];
+  const count = (action: ReapResult["action"]) => all.filter((r) => r.action === action).length;
   return {
-    results,
+    results: all,
     outputs: {
       deleted: String(count("deleted")),
       kept: String(count("kept")),

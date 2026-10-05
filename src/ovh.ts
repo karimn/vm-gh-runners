@@ -3,6 +3,7 @@ import {
   QuotaExceededError,
   ServerExistsError,
   type CreateServerSpec,
+  type Image,
   type Labels,
   type Provider,
   type Server,
@@ -57,6 +58,9 @@ export interface OvhOptions {
   /** Polls for the address of a new server. Defaults: 60 polls, 5 s apart. */
   readonly readyAttempts?: number;
   readonly readyDelayMs?: number;
+  /** Polls while a server stops and while a snapshot is saved. Defaults: 120 polls, 10 s apart. */
+  readonly snapshotAttempts?: number;
+  readonly snapshotDelayMs?: number;
 }
 
 interface Session {
@@ -79,6 +83,15 @@ interface ApiServer {
   fault?: { message?: string };
 }
 
+interface ApiImage {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
+}
+
+const toImage = (i: ApiImage): Image => ({ id: i.id, name: i.name, createdAt: new Date(i.created_at) });
+
 const PAGE = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // RFC 1123 hostname label, as for Hetzner: ensure's names are already like this.
@@ -99,8 +112,8 @@ const validateName = (name: string): void => {
   }
 };
 
-const validateId = (id: string): void => {
-  if (!UUID.test(id)) throw new Error(`invalid server id "${id}"`);
+const validateId = (id: string, what = "server"): void => {
+  if (!UUID.test(id)) throw new Error(`invalid ${what} id "${id}"`);
 };
 
 type Status = Server["status"];
@@ -282,6 +295,102 @@ export class OvhProvider implements Provider {
     await this.request("compute", "PUT", `/servers/${id}`, { server: { name: patch.name } });
     await this.request("compute", "PUT", `/servers/${id}/metadata`, { metadata: patch.labels });
     return this.getServer(id);
+  }
+
+  /**
+   * Stops the server (a snapshot of a running disk can be inconsistent), asks
+   * Nova to snapshot it, then waits until Glance reports the image active. If
+   * anything fails after the image exists it is deleted, so a half-made snapshot
+   * never shows up in `listImages`, and cannot be picked by `ensure`.
+   */
+  async createImage(serverId: string, name: string): Promise<Image> {
+    validateId(serverId);
+    const { snapshotAttempts = 120, snapshotDelayMs = 10_000 } = this.opts;
+
+    await this.request("compute", "POST", `/servers/${serverId}/action`, { "os-stop": null });
+    await this.waitFor(snapshotAttempts, snapshotDelayMs, async () => {
+      const raw = await this.getRaw(serverId);
+      if (toServer(raw).status === "error") throw new Error(`OVH server ${serverId} went to ERROR while stopping`);
+      return raw.status === "SHUTOFF";
+    }, `OVH server ${serverId} did not stop`);
+
+    const res = await this.request("compute", "POST", `/servers/${serverId}/action`, {
+      createImage: { name, metadata: {} },
+    });
+    const imageId = await this.imageIdFrom(res);
+    try {
+      let image: ApiImage | undefined;
+      await this.waitFor(snapshotAttempts, snapshotDelayMs, async () => {
+        const r = await this.request("image", "GET", `/images/${imageId}`);
+        image = (await r.json()) as ApiImage;
+        if (image.status === "killed" || image.status === "deactivated") {
+          throw new Error(`OVH image ${imageId} ended up ${image.status}`);
+        }
+        return image.status === "active";
+      }, `OVH image ${imageId} was not active in time`);
+      return toImage(image!);
+    } catch (e) {
+      try {
+        await this.deleteImage(imageId);
+      } catch (del) {
+        const why = e instanceof Error ? e.message : String(e);
+        const how = del instanceof Error ? del.message : String(del);
+        throw new Error(`${why}; and deleting the unfinished image ${imageId} failed (${how}): delete it by hand`);
+      }
+      throw e;
+    }
+  }
+
+  async listImages(namePrefix: string): Promise<readonly Image[]> {
+    const images: Image[] = [];
+    for (let marker: string | undefined; ; ) {
+      // Snapshots are private; the stock images are public and not ours to prune.
+      const params = new URLSearchParams({ visibility: "private", status: "active", limit: String(PAGE) });
+      if (marker) params.set("marker", marker);
+      const res = await this.request("image", "GET", `/images?${params}`);
+      const body = (await res.json()) as { images: ApiImage[]; next?: string };
+      images.push(...body.images.filter((i) => i.name.startsWith(namePrefix)).map(toImage));
+      const last = body.images.at(-1);
+      if (!body.next || !last) return images;
+      marker = last.id;
+    }
+  }
+
+  /** An image that is already gone counts as deleted. Any other failure rejects. */
+  async deleteImage(id: string): Promise<void> {
+    validateId(id, "image");
+    try {
+      await this.request("image", "DELETE", `/images/${id}`);
+    } catch (e) {
+      if (e instanceof OvhApiError && e.status === 404) return;
+      throw e;
+    }
+  }
+
+  /** Nova's createImage answers with a Location header (and `image_id` in the body on newer microversions). */
+  private async imageIdFrom(res: Response): Promise<string> {
+    let id: string | undefined;
+    try {
+      id = ((await res.json()) as { image_id?: string }).image_id;
+    } catch {
+      // Older microversions return an empty body.
+    }
+    id ??= res.headers.get("location")?.split("/").filter(Boolean).at(-1);
+    if (!id || !UUID.test(id)) throw new Error("OVH accepted the snapshot but did not say which image it is");
+    return id;
+  }
+
+  private async waitFor(
+    attempts: number,
+    delayMs: number,
+    done: () => Promise<boolean>,
+    timeoutMessage: string,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      if (await done()) return;
+      if (attempt < attempts) await this.sleep(delayMs);
+    }
+    throw new Error(`${timeoutMessage} after ${attempts} checks`);
   }
 
   /**

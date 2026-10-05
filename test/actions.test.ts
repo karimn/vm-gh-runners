@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runEnsure, runReap, runRelease } from "../src/commands.ts";
+import { runBuildImage, runEnsure, runReap, runRelease } from "../src/commands.ts";
 import type { EnsureCliConfig } from "../src/config.ts";
 import { MockGithub } from "../src/mock-github.ts";
 import { MockProvider } from "../src/mock-provider.ts";
 import { MockRegistrar } from "../src/mock-registrar.ts";
+import { FakeSsh } from "./fake-ssh.ts";
 
 const root = join(import.meta.dir, "..");
 
@@ -32,7 +33,7 @@ const cliSource = readFileSync(join(root, "src/cli.ts"), "utf8");
 
 const ensureCfg: EnsureCliConfig = {
   repo: "karimn/sia", pool: "ci", provider: { kind: "hetzner", token: "x" }, githubToken: "x", serverType: "t",
-  image: "i", location: "l", runnerCount: 1, labels: ["a"], runnerVersion: "latest",
+  image: "i", baseImage: "i", maxImageAgeDays: 14, location: "l", runnerCount: 1, labels: ["a"], runnerVersion: "latest",
   extraPackages: [], sshKeyNames: ["k"], sshPrivateKey: "k",
 };
 
@@ -259,6 +260,7 @@ describe.each([
   ["examples/use-in-a-workflow-ovh.yml", "ensure"],
   ["examples/reaper-ovh.yml", "reap"],
   ["examples/release.yml", "release"],
+  ["examples/build-image-ovh.yml", "build-image"],
 ])("%s", (file, actionDir) => {
   const workflow = Bun.YAML.parse(readFileSync(join(root, file), "utf8")) as {
     jobs: Record<string, { steps?: { uses?: string; with?: Record<string, string> }[] }>;
@@ -281,9 +283,117 @@ describe.each([
   });
 
   test("takes every token and key from a secret, never inline", () => {
-    for (const i of ["hcloud-token", "ovh-application-credential-id", "ovh-application-credential-secret", "github-token", "ssh-private-key"]) {
+    for (const i of ["hcloud-token", "ovh-application-credential-id", "ovh-application-credential-secret", "github-token", "ssh-private-key", "registry-password"]) {
       const v = step?.with?.[i];
       if (v !== undefined) expect(v).toMatch(/^\$\{\{\s*secrets\.\w+\s*\}\}$/);
     }
+  });
+});
+
+describe("build-image/action.yml", () => {
+  const action = load("build-image");
+  const env = cliStep(action).env ?? {};
+
+  test("is a composite action whose run steps have a shell", () => {
+    expect(action.runs.using).toBe("composite");
+    for (const s of action.runs.steps.filter((s) => s.run)) expect(s.shell).toBe("bash");
+  });
+
+  test("has no expression in any description or name, which GitHub would evaluate", () => {
+    expect(JSON.stringify((Bun.YAML.parse(readFileSync(join(root, "build-image/action.yml"), "utf8")) as { description: string }).description)).not.toContain("${{");
+    for (const [name, input] of Object.entries(action.inputs as Record<string, { description?: string }>)) {
+      expect([name, input.description ?? ""].join()).not.toContain("${{");
+    }
+  });
+
+  test("never interpolates inputs or secrets into a shell script", () => {
+    for (const s of action.runs.steps.filter((s) => s.run)) {
+      expect(s.run).not.toMatch(/\$\{\{\s*(inputs|secrets|github\.event)/);
+    }
+  });
+
+  test("runs the build-image command of a CLI that exists", () => {
+    expect(cliStep(action).run).toContain("$ACTION_PATH/../src/cli.ts\" build-image");
+    expect(existsSync(join(root, "src/cli.ts"))).toBe(true);
+  });
+
+  test("is OVH only: the provider is fixed, and no Hetzner or GitHub token is taken", () => {
+    expect(env["VGR_PROVIDER"]).toBe("ovh");
+    expect(Object.keys(action.inputs)).not.toContain("hcloud-token");
+    expect(Object.keys(action.inputs)).not.toContain("github-token");
+  });
+
+  test("passes only environment variables the CLI reads, and maps each from a declared input", () => {
+    for (const [name, value] of Object.entries(env)) {
+      expect(configSource.includes(`"${name}"`) || name === "ACTION_PATH").toBe(true);
+      const m = /^\$\{\{\s*inputs\.([\w-]+)\s*\}\}$/.exec(value);
+      if (m) expect(Object.keys(action.inputs)).toContain(m[1]!);
+      else expect(["ACTION_PATH", "VGR_PROVIDER"]).toContain(name);
+    }
+  });
+
+  test("supplies everything the CLI requires, and marks those inputs required", () => {
+    for (const name of ["VGR_POOL", "VGR_SERVER_TYPE", "VGR_SSH_KEY_NAMES", "VGR_SSH_PRIVATE_KEY"]) {
+      expect(Object.keys(env)).toContain(name);
+    }
+    for (const i of ["pool", "server-type", "ssh-key-names", "ssh-private-key"]) {
+      expect(action.inputs[i]?.required).toBe(true);
+    }
+  });
+
+  test("leaves every optional input without a default, so the CLI's own defaults apply", () => {
+    for (const [name, def] of Object.entries(action.inputs)) {
+      if (!def.required) expect([name, def.default]).toEqual([name, undefined]);
+    }
+  });
+
+  test("exposes exactly the outputs the command produces", async () => {
+    const provider = new MockProvider();
+    const { outputs } = await runBuildImage(
+      { provider, ssh: new FakeSsh((c) => (c.command === "test -f /var/run/reboot-required" ? { code: 1 } : undefined)) },
+      {
+        pool: "ci",
+        repo: "karimn/sia",
+        provider: { kind: "ovh", authUrl: "https://x", credentialId: "i", credentialSecret: "s", region: "R" },
+        serverType: "t", baseImage: "b", location: "l", runnerVersion: "2.337.0",
+        extraPackages: [], prepullImages: [], keep: 2, sshKeyNames: ["k"], sshPrivateKey: "k",
+      },
+      { sleep: async () => {} },
+    );
+    expect(Object.keys(action.outputs).sort()).toEqual(Object.keys(outputs).sort());
+    for (const [name, { value }] of Object.entries(action.outputs)) {
+      expect(value).toBe(`\${{ steps.cli.outputs.${name} }}`);
+    }
+  });
+
+  test("the example workflow builds weekly and can be run by hand", () => {
+    const wf = Bun.YAML.parse(readFileSync(join(root, "examples/build-image-ovh.yml"), "utf8")) as {
+      on: { schedule: { cron: string }[]; workflow_dispatch: unknown };
+      concurrency: { "cancel-in-progress": boolean };
+    };
+    expect(wf.on.schedule).toHaveLength(1);
+    // minute hour day-of-month month day-of-week: once a week, at a fixed weekday
+    expect(wf.on.schedule[0]!.cron).toMatch(/^\d+ \d+ \* \* [0-6]$/);
+    expect("workflow_dispatch" in wf.on).toBe(true);
+    // never cancel a build midway: that is what leaves a temporary server behind
+    expect(wf.concurrency["cancel-in-progress"]).toBe(false);
+  });
+});
+
+describe("ensure action: built images", () => {
+  const action = load("ensure");
+  const env = cliStep(action).env ?? {};
+
+  test("passes the fallback image and age limit, both optional", () => {
+    expect(env["VGR_BASE_IMAGE"]).toBe("${{ inputs.base-image }}");
+    expect(env["VGR_MAX_IMAGE_AGE_DAYS"]).toBe("${{ inputs.max-image-age-days }}");
+    for (const i of ["base-image", "max-image-age-days"]) {
+      expect(action.inputs[i]?.required).not.toBe(true);
+      expect(action.inputs[i]?.default).toBeUndefined();
+    }
+  });
+
+  test("documents latest-built on the image input", () => {
+    expect((action.inputs["image"] as { description?: string }).description).toContain("latest-built");
   });
 });

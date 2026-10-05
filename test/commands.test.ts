@@ -18,6 +18,8 @@ const ensureCfg: EnsureCliConfig = {
   githubToken: "x",
   serverType: "cpx62",
   image: "ubuntu-24.04",
+  baseImage: "ubuntu-24.04",
+  maxImageAgeDays: 14,
   location: "nbg1",
   runnerCount: 2,
   labels: ["vm-gh-runners", "pool-ci"],

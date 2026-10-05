@@ -50,6 +50,13 @@ export interface CreateServerSpec {
  */
 export type BillingModel = "per-started-hour" | "prorated";
 
+/** A snapshot of a server's disk that new servers can boot from. */
+export interface Image {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: Date;
+}
+
 export interface Provider {
   readonly billing: BillingModel;
   /**
@@ -74,6 +81,17 @@ export interface Provider {
    * that still carries the pool's labels and a retry finishes the job.
    */
   updateServer(id: string, patch: ServerPatch): Promise<Server>;
+  /**
+   * Snapshot a server's disk as a private image called `name`, and return it once
+   * it can be booted from. The provider stops the server first so the disk is
+   * consistent; the server is left stopped (the caller deletes it). A failed
+   * snapshot must not leave a half-made image behind.
+   */
+  createImage(serverId: string, name: string): Promise<Image>;
+  /** The project's own (private) images that are ready to boot, whose name starts with `namePrefix`. */
+  listImages(namePrefix: string): Promise<readonly Image[]>;
+  /** An image that is already gone counts as deleted. */
+  deleteImage(id: string): Promise<void>;
 }
 
 export interface ServerPatch {

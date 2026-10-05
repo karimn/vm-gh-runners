@@ -1,0 +1,126 @@
+name: vm-gh-runners build-image
+description: >-
+  Build the image that ensure boots when given image latest-built. Boots a
+  temporary OVH server from the stock image, applies every security update,
+  installs Docker and the runner, optionally pulls container images, cleans it so
+  clones boot as new machines, snapshots it as vgr-<pool>-<owner>_<repo>-<yyyymmdd>, deletes the
+  temporary server and the older images beyond the newest few. Run it on a weekly
+  schedule from the consuming repo (see examples/build-image-ovh.yml). It takes
+  about 15 minutes and OVH bills the temporary server for that time plus the
+  snapshot's storage. OVH only: Hetzner cannot build images yet.
+
+inputs:
+  pool:
+    description: >-
+      The pool the image is for. Must match the pool given to ensure. The image
+      is built for the repo this workflow runs in and named
+      vgr-<pool>-<owner>_<repo>-<yyyymmdd>; ensure finds it by that.
+    required: true
+  server-type:
+    description: >-
+      OVH flavor of the temporary server, such as b3-8. Its disk size is the
+      image's size, and servers that boot the image need a root disk at least as
+      large, so pick the smallest flavor whose disk holds the OS, Docker and any
+      pre-pulled images, and no larger than the flavor given to ensure.
+    required: true
+  ssh-key-names:
+    description: >-
+      Name of one SSH key pair already uploaded to the OVH project, in the
+      region. The same one ensure uses is fine: it is removed from the image.
+    required: true
+  ssh-private-key:
+    description: The private half of that key. Pass it from a secret.
+    required: true
+  ovh-application-credential-id:
+    description: ID of an OVH application credential created as unrestricted. Required.
+    required: false
+  ovh-application-credential-secret:
+    description: Secret of that OVH application credential. Required. Pass it from a secret.
+    required: false
+  ovh-auth-url:
+    description: >-
+      OVH Keystone v3 URL. Defaults to https://auth.cloud.ovh.us/v3 (the OVH US
+      account's); an EU account needs https://auth.cloud.ovh.net/v3. Must be https.
+    required: false
+  location:
+    description: OVH region. Defaults to US-EAST-VA-1. Images are per region, so it must match ensure's.
+    required: false
+  base-image:
+    description: The stock image to build from. Defaults to "Ubuntu 24.04".
+    required: false
+  runner-version:
+    description: >-
+      Runner version baked in, such as 2.337.0, or latest (the default) for the
+      newest at build time. A caller that pins a different version in ensure
+      still works: its first boot installs that version over the baked one.
+    required: false
+  extra-packages:
+    description: >-
+      Comma-separated extra apt packages to bake in. Give ensure the same list
+      or leave it unset; ensure installs its own extras at boot, which is only
+      slow if they are missing here.
+    required: false
+  prepull-images:
+    description: >-
+      Container images to pull into the image's Docker store, separated by
+      commas or newlines, such as a repo's CI image. Jobs then start without the
+      pull. Read at every build, so pass the tag in use now (compute it in an
+      earlier step), not a literal that goes stale. A tag that does not exist
+      fails the build.
+    required: false
+  registry:
+    description: Registry host that registry-username logs in to. Defaults to ghcr.io.
+    required: false
+  registry-username:
+    description: >-
+      Username for pulling private images. Give it with registry-password. The
+      credential is used for the pulls only and is never written to the image.
+    required: false
+  registry-password:
+    description: Password or token for registry-username, such as a PAT with read:packages. Pass it from a secret.
+    required: false
+  keep-images:
+    description: How many built images of the pool to keep, the new one included. Defaults to 2; at least 2, so a concurrent ensure never loses the image it just chose.
+    required: false
+
+outputs:
+  image_id:
+    description: ID of the image that was built.
+    value: ${{ steps.cli.outputs.image_id }}
+  image_name:
+    description: Name of the image that was built.
+    value: ${{ steps.cli.outputs.image_name }}
+  pruned:
+    description: Number of older images deleted.
+    value: ${{ steps.cli.outputs.pruned }}
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.3.13
+    - id: cli
+      shell: bash
+      # Everything reaches the CLI through env, never by interpolating into the
+      # script: a value pasted into `run:` is parsed as shell.
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.ovh-application-credential-id }}
+        OS_APPLICATION_CREDENTIAL_SECRET: ${{ inputs.ovh-application-credential-secret }}
+        OS_AUTH_URL: ${{ inputs.ovh-auth-url }}
+        VGR_PROVIDER: ovh
+        VGR_POOL: ${{ inputs.pool }}
+        VGR_SERVER_TYPE: ${{ inputs.server-type }}
+        VGR_SSH_KEY_NAMES: ${{ inputs.ssh-key-names }}
+        VGR_SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
+        VGR_LOCATION: ${{ inputs.location }}
+        VGR_BASE_IMAGE: ${{ inputs.base-image }}
+        VGR_RUNNER_VERSION: ${{ inputs.runner-version }}
+        VGR_EXTRA_PACKAGES: ${{ inputs.extra-packages }}
+        VGR_PREPULL_IMAGES: ${{ inputs.prepull-images }}
+        VGR_REGISTRY: ${{ inputs.registry }}
+        VGR_REGISTRY_USERNAME: ${{ inputs.registry-username }}
+        VGR_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
+        VGR_KEEP_IMAGES: ${{ inputs.keep-images }}
+      run: bun "$ACTION_PATH/../src/cli.ts" build-image

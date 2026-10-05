@@ -31,7 +31,9 @@ export type ReapReason =
   | "max-age"
   | "deleted"
   | "deregister-failed"
-  | "delete-failed";
+  | "delete-failed"
+  /** A temporary `build-image` server a killed build left behind. */
+  | "stale-builder";
 
 export interface ReapResult {
   readonly serverId: string;

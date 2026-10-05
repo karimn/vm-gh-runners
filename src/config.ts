@@ -20,6 +20,9 @@ export type ProviderConfig =
       readonly region: string;
     };
 
+/** The `image` value that boots the newest built image; see `images.ts`. */
+const BUILT_IMAGE_REF = "latest-built";
+
 export const DEFAULTS = {
   hetzner: { image: "ubuntu-24.04", location: "nbg1" },
   // OVH's stock Ubuntu image, not "Debian 12 - Docker": that one ships docker-ce,
@@ -43,7 +46,12 @@ export interface CommonConfig {
 
 export interface EnsureCliConfig extends CommonConfig {
   readonly serverType: string;
+  /** An image name or id, or `latest-built` for the newest image `build-image` made for the pool. */
   readonly image: string;
+  /** The stock image: what `latest-built` falls back to when the pool has no built image yet. */
+  readonly baseImage: string;
+  /** Warn (not fail) when the newest built image is older than this many days. */
+  readonly maxImageAgeDays: number;
   readonly location: string;
   readonly runnerCount: number;
   readonly labels: readonly string[];
@@ -55,6 +63,23 @@ export interface EnsureCliConfig extends CommonConfig {
    */
   readonly sshKeyNames: readonly string[];
   /** Private half of the key above. Written to a 0600 temp file, never logged. */
+  readonly sshPrivateKey: string;
+}
+
+export interface BuildImageCliConfig {
+  readonly pool: string;
+  /** `owner/name`; in Actions it is `GITHUB_REPOSITORY`. Part of the image's name. */
+  readonly repo: string;
+  readonly provider: ProviderConfig;
+  readonly serverType: string;
+  readonly baseImage: string;
+  readonly location: string;
+  readonly runnerVersion: string;
+  readonly extraPackages: readonly string[];
+  readonly prepullImages: readonly string[];
+  readonly registry?: { readonly host: string; readonly username: string; readonly password: string };
+  readonly keep: number;
+  readonly sshKeyNames: readonly string[];
   readonly sshPrivateKey: string;
 }
 
@@ -111,9 +136,14 @@ const providerConfig = (env: Env): ProviderConfig => {
   throw new Error(`VGR_PROVIDER must be hetzner or ovh, got "${kind}"`);
 };
 
-const common = (env: Env): CommonConfig => {
+const repoFrom = (env: Env): string => {
   const repo = env["VGR_REPO"]?.trim() || required(env, "GITHUB_REPOSITORY");
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) throw new Error("the repo must be in owner/name form");
+  return repo;
+};
+
+const common = (env: Env): CommonConfig => {
+  const repo = repoFrom(env);
   const runId = env["VGR_RUN_ID"]?.trim();
   // Actions passes an unset input as "". Anything else must be a real run id.
   if (runId && !/^\d{1,20}$/.test(runId)) throw new Error("VGR_RUN_ID must be a workflow run id (digits only)");
@@ -175,15 +205,55 @@ export const loadEnsureConfig = (env: Env): EnsureCliConfig => {
     throw new Error("VGR_SSH_KEY_NAMES must name exactly one key pair for ovh (Nova takes one per server)");
   }
   const defaults = DEFAULTS[base.provider.kind];
+  const image = env["VGR_IMAGE"]?.trim() || defaults.image;
+  if (image === BUILT_IMAGE_REF && base.provider.kind !== "ovh") {
+    throw new Error(`VGR_IMAGE ${BUILT_IMAGE_REF} is only supported on ovh`);
+  }
   return {
     ...base,
     serverType: required(env, "VGR_SERVER_TYPE"),
-    image: env["VGR_IMAGE"]?.trim() || defaults.image,
+    image,
+    baseImage: env["VGR_BASE_IMAGE"]?.trim() || defaults.image,
+    maxImageAgeDays: integer(env, "VGR_MAX_IMAGE_AGE_DAYS", 1) ?? 14,
     location: base.provider.kind === "ovh" ? base.provider.region : env["VGR_LOCATION"]?.trim() || defaults.location,
     runnerCount: integer(env, "VGR_RUNNER_COUNT", 1) ?? 3,
     labels: runnerLabels(labels, base),
     runnerVersion: runnerVersion(env),
     extraPackages: list(env["VGR_EXTRA_PACKAGES"]),
+    sshKeyNames,
+    sshPrivateKey: required(env, "VGR_SSH_PRIVATE_KEY"),
+  };
+};
+
+export const loadBuildImageConfig = (env: Env): BuildImageCliConfig => {
+  const provider = providerConfig(env);
+  if (provider.kind !== "ovh") throw new Error("build-image is only supported on ovh");
+  const sshKeyNames = list(required(env, "VGR_SSH_KEY_NAMES"));
+  if (sshKeyNames.length !== 1) {
+    throw new Error("VGR_SSH_KEY_NAMES must name exactly one key pair for ovh (Nova takes one per server)");
+  }
+  const username = env["VGR_REGISTRY_USERNAME"]?.trim();
+  const password = env["VGR_REGISTRY_PASSWORD"];
+  // Actions passes an unset input as "". One without the other is a mistake, not "public images".
+  if (Boolean(username) !== Boolean(password)) {
+    throw new Error("VGR_REGISTRY_USERNAME and VGR_REGISTRY_PASSWORD must be given together");
+  }
+  return {
+    pool: required(env, "VGR_POOL"),
+    repo: repoFrom(env),
+    provider,
+    serverType: required(env, "VGR_SERVER_TYPE"),
+    baseImage: env["VGR_BASE_IMAGE"]?.trim() || DEFAULTS.ovh.image,
+    location: provider.region,
+    runnerVersion: runnerVersion(env),
+    extraPackages: list(env["VGR_EXTRA_PACKAGES"]),
+    // One per line in a workflow's multi-line input, or comma separated.
+    prepullImages: (env["VGR_PREPULL_IMAGES"] ?? "").split(/[\s,]+/).filter(Boolean),
+    ...(username && password
+      ? { registry: { host: env["VGR_REGISTRY"]?.trim() || "ghcr.io", username, password } }
+      : {}),
+    // At least 2: with 1, a build could delete the image a concurrent ensure just resolved.
+    keep: integer(env, "VGR_KEEP_IMAGES", 2) ?? 2,
     sshKeyNames,
     sshPrivateKey: required(env, "VGR_SSH_PRIVATE_KEY"),
   };

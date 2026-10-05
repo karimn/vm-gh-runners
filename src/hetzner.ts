@@ -2,6 +2,7 @@ import {
   QuotaExceededError,
   ServerExistsError,
   type CreateServerSpec,
+  type Image,
   type Labels,
   type Provider,
   type Server,
@@ -85,6 +86,8 @@ const toServer = (s: ApiServer): Server => ({
 });
 
 /** Hetzner Cloud adapter. */
+const UNSUPPORTED_IMAGES = "built images are only supported on ovh; Hetzner servers boot the stock image";
+
 export class HetznerProvider implements Provider {
   /** "We always round up the hourly usage of a server" (Hetzner FAQ). */
   readonly billing = "per-started-hour" as const;
@@ -169,6 +172,17 @@ export class HetznerProvider implements Provider {
    * Hetzner's `labels` on a PUT replaces the whole set, so the caller passes the
    * complete set it wants. Name and labels go in one request.
    */
+  // Built images are an OVH feature for now; a Hetzner snapshot adapter is future work.
+  async createImage(): Promise<Image> {
+    throw new Error(UNSUPPORTED_IMAGES);
+  }
+  async listImages(): Promise<readonly Image[]> {
+    throw new Error(UNSUPPORTED_IMAGES);
+  }
+  async deleteImage(): Promise<void> {
+    throw new Error(UNSUPPORTED_IMAGES);
+  }
+
   async updateServer(id: string, patch: ServerPatch): Promise<Server> {
     if (!/^\d+$/.test(id)) throw new Error(`invalid server id "${id}"`);
     if (!HOSTNAME.test(patch.name)) {
