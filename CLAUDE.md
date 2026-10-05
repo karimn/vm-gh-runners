@@ -27,6 +27,8 @@ bun run typecheck
 - The account is capped at 5 servers. Two consumers plus fit VMs can hit it.
 - Cloud-init user-data is readable without authentication from inside the VM, so
   never put a provider token in it.
+- The `github-token` PAT needs Administration read and write AND Actions read
+  (reap lists workflow runs); see DESIGN.md "GitHub token permissions".
 - Runners registered to a personal-account repo serve only that repo. Each
   consuming repo therefore needs its own VM and its own secrets.
 

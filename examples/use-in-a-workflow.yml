@@ -9,7 +9,7 @@
 #
 # Secrets to add to the repo (Settings > Secrets and variables > Actions):
 #   HCLOUD_TOKEN         Hetzner project API token, read and write. Use a project just for CI.
-#   VGR_GITHUB_TOKEN     Fine-grained PAT for this repo with Administration: read and write.
+#   VGR_GITHUB_TOKEN     Fine-grained PAT for this repo with Administration: read and write and Actions: read.
 #   VGR_SSH_PRIVATE_KEY  Private key whose public half is uploaded to that Hetzner project.
 #                        A fresh key used for nothing else, with no passphrase.
 

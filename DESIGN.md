@@ -68,6 +68,24 @@ scheduled workflow calls `reap`.
   when zero or several servers match, or the server is not running. Nothing
   deletes a released server; the new owner must, or it bills indefinitely.
 
+## GitHub token permissions
+
+`github-token` is a fine-grained PAT on the consuming repo. The workflow's own
+`GITHUB_TOKEN` cannot manage runners. Every REST call (`src/github-client.ts`) and
+the permission it needs:
+
+| Call | Used by | Permission |
+|---|---|---|
+| `GET /actions/runners` | ensure, reap, release | Administration: read |
+| `POST /actions/runners/registration-token` | ensure | Administration: write |
+| `DELETE /actions/runners/{id}` | reap, release | Administration: write |
+| `GET /actions/runs?status=queued\|in_progress` | reap, release | Actions: read |
+
+So the PAT needs **Administration read and write AND Actions read**. Missing
+Actions read made `reap` fail on 2026-10-05 and left a billed VM running. `reap`
+keeps failing loudly on a 403 (a silent skip would leave the VM billing); the error
+now names the missing permission and endpoint.
+
 ## Concurrency
 
 `ensure` must be safe when many runs call it at once, and a workflow

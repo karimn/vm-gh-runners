@@ -41,7 +41,7 @@ inputs:
   github-token:
     description: >-
       Token that can manage this repo's runners (fine-grained PAT with
-      Administration read and write). Pass it from a secret.
+      Administration read and write, and Actions read). Pass it from a secret.
     required: true
   window-start-minute:
     description: >-
