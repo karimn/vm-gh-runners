@@ -2,6 +2,7 @@ import {
   labelsMatch,
   ServerExistsError,
   type CreateServerSpec,
+  type BillingModel,
   type Labels,
   type Provider,
   type Server,
@@ -14,7 +15,10 @@ export class MockProvider implements Provider {
   readonly calls: string[] = [];
   private nextId = 1;
 
-  constructor(private readonly now: () => Date = () => new Date()) {}
+  constructor(
+    private readonly now: () => Date = () => new Date(),
+    readonly billing: BillingModel = "per-started-hour",
+  ) {}
 
   async createServer(spec: CreateServerSpec): Promise<Server> {
     this.calls.push(`create:${spec.name}`);

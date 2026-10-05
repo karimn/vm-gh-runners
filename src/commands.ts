@@ -78,7 +78,10 @@ export interface ReapOutcome {
   readonly failed: boolean;
 }
 
-/** Delete this pool's idle servers that are in the last minutes of a paid hour. */
+/**
+ * Delete this pool's idle servers: in the last minutes of a paid hour where the
+ * provider bills per started hour, at once where it bills by runtime.
+ */
 export const runReap = async (
   deps: ReapDeps,
   cfg: ReapCliConfig,
@@ -141,7 +144,7 @@ export const formatReleaseResult = (r: ReleaseResult): string => {
       `released server ${r.previousName} (id ${r.serverId}) as ${r.name}`,
       `address: ${r.address ?? "none"}`,
       "reap and ensure no longer see it; nothing will delete it.",
-      "Hetzner billing continues until the new owner deletes the server.",
+      "billing continues until the new owner deletes the server.",
     ].join("\n");
   }
   const what = RELEASE_REFUSALS[r.reason] ?? r.reason;

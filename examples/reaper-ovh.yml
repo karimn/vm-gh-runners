@@ -1,0 +1,41 @@
+# The OVH Public Cloud version of examples/reaper.yml. Copy into the consuming
+# repo's .github/workflows/ next to the workflow that calls the ensure action.
+#
+# This is the safety net, not the main path: the `teardown` job in
+# examples/use-in-a-workflow-ovh.yml deletes the VM as soon as the tests finish.
+# This catches the VMs that never reached teardown, such as a cancelled run.
+#
+# OVH bills a server for the time it exists, so an idle VM is deleted at the next
+# run of this workflow, not held until the end of a paid hour. There is no
+# window-start-minute: setting it with provider ovh is an error. A stopped server
+# still bills, which is why this deletes rather than stops.
+#
+# Every 30 minutes is enough because it is only a safety net: a missed VM costs
+# at most about half an hour of runtime, not a full extra hour as on Hetzner.
+# It runs on a GitHub-hosted runner (about 1,500 billed minutes a month) on
+# purpose. The pool's runners are `self-hosted` too, so a self-hosted reaper
+# could land on one of them, making it the busy runner that makes reap keep the
+# server. A GitHub-hosted runner is never on the VM.
+#
+# `location` must match the one given to ensure: servers are listed per region.
+
+name: reap idle OVH VMs
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: karimn/vm-gh-runners/reap@main
+        with:
+          pool: ci
+          provider: ovh # the default; shown for clarity
+          location: US-EAST-VA-1
+          ovh-application-credential-id: ${{ secrets.OVH_APPLICATION_CREDENTIAL_ID }}
+          ovh-application-credential-secret: ${{ secrets.OVH_APPLICATION_CREDENTIAL_SECRET }}
+          github-token: ${{ secrets.VGR_GITHUB_TOKEN }}

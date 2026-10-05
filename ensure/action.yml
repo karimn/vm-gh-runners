@@ -10,17 +10,41 @@ inputs:
     description: Names a group of servers. One pool per kind of workload.
     required: true
   server-type:
-    description: Provider size, for example a Hetzner type such as cpx62.
+    description: >-
+      Provider size. A Hetzner server type such as cpx62, or an OVH flavor such
+      as b3-32.
     required: true
   ssh-key-names:
-    description: Comma-separated names or IDs of SSH keys already uploaded to the Hetzner project.
+    description: >-
+      Comma-separated names or IDs of SSH keys already uploaded to the cloud
+      project. OVH takes exactly one, a key pair that exists in the region.
     required: true
   ssh-private-key:
     description: The private half of that key. Pass it from a secret.
     required: true
+  provider:
+    description: >-
+      Cloud to run on, ovh or hetzner. Defaults to ovh. Each needs its own
+      credentials, below; the other provider's can be left unset. A caller that
+      uses Hetzner must set this to hetzner.
+    required: false
   hcloud-token:
-    description: Hetzner project API token (read and write). Pass it from a secret.
-    required: true
+    description: Hetzner project API token (read and write). Required when provider is hetzner. Pass it from a secret.
+    required: false
+  ovh-application-credential-id:
+    description: >-
+      ID of an OVH application credential created as unrestricted, so it can
+      create and delete servers. Required when provider is ovh.
+    required: false
+  ovh-application-credential-secret:
+    description: Secret of that OVH application credential. Required when provider is ovh. Pass it from a secret.
+    required: false
+  ovh-auth-url:
+    description: >-
+      OVH Keystone v3 URL. Defaults to https://auth.cloud.ovh.us/v3, the OVH US
+      account's; an EU account needs https://auth.cloud.ovh.net/v3. The
+      credential is sent here, so it must be https.
+    required: false
   github-token:
     description: >-
       Token that can manage this repo's runners (fine-grained PAT with
@@ -31,10 +55,12 @@ inputs:
     description: Runners per server. Defaults to 3.
     required: false
   image:
-    description: Server image. Defaults to ubuntu-24.04.
+    description: Server image. Defaults to ubuntu-24.04 on Hetzner and "Ubuntu 24.04" on OVH.
     required: false
   location:
-    description: Server location. Defaults to nbg1.
+    description: >-
+      Server location. On Hetzner it defaults to nbg1; on OVH it is the region
+      and defaults to US-EAST-VA-1.
     required: false
   runner-labels:
     description: Comma-separated runner labels. Defaults to "vm-gh-runners,pool-<pool>".
@@ -79,7 +105,11 @@ runs:
       # script: a value pasted into `run:` is parsed as shell.
       env:
         ACTION_PATH: ${{ github.action_path }}
+        VGR_PROVIDER: ${{ inputs.provider }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.ovh-application-credential-id }}
+        OS_APPLICATION_CREDENTIAL_SECRET: ${{ inputs.ovh-application-credential-secret }}
+        OS_AUTH_URL: ${{ inputs.ovh-auth-url }}
         VGR_GITHUB_TOKEN: ${{ inputs.github-token }}
         VGR_POOL: ${{ inputs.pool }}
         VGR_SERVER_TYPE: ${{ inputs.server-type }}

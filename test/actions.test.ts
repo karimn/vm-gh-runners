@@ -31,7 +31,7 @@ const configSource = readFileSync(join(root, "src/config.ts"), "utf8");
 const cliSource = readFileSync(join(root, "src/cli.ts"), "utf8");
 
 const ensureCfg: EnsureCliConfig = {
-  repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x", serverType: "t",
+  repo: "karimn/sia", pool: "ci", provider: { kind: "hetzner", token: "x" }, githubToken: "x", serverType: "t",
   image: "i", location: "l", runnerCount: 1, labels: ["a"], runnerVersion: "latest",
   extraPackages: [], sshKeyNames: ["k"], sshPrivateKey: "k",
 };
@@ -97,13 +97,44 @@ describe.each(["ensure", "reap", "release"])("%s/action.yml", (dir) => {
   });
 });
 
+describe.each(["ensure", "reap", "release"])("%s provider inputs", (dir) => {
+  const action = load(dir);
+  const env = cliStep(action).env ?? {};
+
+  test("selects the provider, and defaults to ovh by leaving it unset (the CLI decides)", () => {
+    expect(env["VGR_PROVIDER"]).toBe("${{ inputs.provider }}");
+    expect(action.inputs["provider"]?.required).not.toBe(true);
+    expect(action.inputs["provider"]?.default).toBeUndefined();
+  });
+
+  test("leaves every credential optional, because only one provider's is used", () => {
+    for (const i of ["hcloud-token", "ovh-application-credential-id", "ovh-application-credential-secret", "ovh-auth-url"]) {
+      expect(action.inputs[i]).toBeDefined();
+      expect(action.inputs[i]?.required).not.toBe(true);
+      expect(action.inputs[i]?.default).toBeUndefined();
+    }
+  });
+
+  test("passes the OVH credential under the OpenStack names the CLI reads", () => {
+    expect(env["OS_APPLICATION_CREDENTIAL_ID"]).toBe("${{ inputs.ovh-application-credential-id }}");
+    expect(env["OS_APPLICATION_CREDENTIAL_SECRET"]).toBe("${{ inputs.ovh-application-credential-secret }}");
+    expect(env["OS_AUTH_URL"]).toBe("${{ inputs.ovh-auth-url }}");
+    expect(env["HCLOUD_TOKEN"]).toBe("${{ inputs.hcloud-token }}");
+  });
+
+  test("takes the region from the location input, which reap and release need too", () => {
+    expect(env["VGR_LOCATION"]).toBe("${{ inputs.location }}");
+    expect(action.inputs["location"]?.required).not.toBe(true);
+  });
+});
+
 describe("ensure inputs and env", () => {
   const action = load("ensure");
   const env = cliStep(action).env ?? {};
 
   test("supplies everything the CLI requires", () => {
     for (const name of [
-      "HCLOUD_TOKEN", "VGR_GITHUB_TOKEN", "VGR_POOL", "VGR_SERVER_TYPE",
+      "VGR_GITHUB_TOKEN", "VGR_POOL", "VGR_SERVER_TYPE",
       "VGR_SSH_KEY_NAMES", "VGR_SSH_PRIVATE_KEY",
     ]) {
       expect(Object.keys(env)).toContain(name);
@@ -111,7 +142,7 @@ describe("ensure inputs and env", () => {
   });
 
   test("marks the required inputs required", () => {
-    for (const i of ["pool", "server-type", "ssh-key-names", "ssh-private-key", "hcloud-token", "github-token"]) {
+    for (const i of ["pool", "server-type", "ssh-key-names", "ssh-private-key", "github-token"]) {
       expect(action.inputs[i]?.required).toBe(true);
     }
   });
@@ -142,13 +173,13 @@ describe("reap inputs and env", () => {
   const env = cliStep(action).env ?? {};
 
   test("supplies everything the CLI requires", () => {
-    for (const name of ["HCLOUD_TOKEN", "VGR_GITHUB_TOKEN", "VGR_POOL"]) {
+    for (const name of ["VGR_GITHUB_TOKEN", "VGR_POOL"]) {
       expect(Object.keys(env)).toContain(name);
     }
   });
 
   test("marks the required inputs required", () => {
-    for (const i of ["pool", "hcloud-token", "github-token"]) {
+    for (const i of ["pool", "github-token"]) {
       expect(action.inputs[i]?.required).toBe(true);
     }
   });
@@ -156,7 +187,7 @@ describe("reap inputs and env", () => {
   test("exposes exactly the outputs the command produces", async () => {
     const { outputs } = await runReap(
       { provider: new MockProvider(), github: new MockGithub() },
-      { repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x" },
+      { repo: "karimn/sia", pool: "ci", provider: { kind: "hetzner", token: "x" }, githubToken: "x" },
     );
     expect(Object.keys(action.outputs).sort()).toEqual(Object.keys(outputs).sort());
     for (const [name, { value }] of Object.entries(action.outputs)) {
@@ -170,13 +201,13 @@ describe("release inputs and env", () => {
   const env = cliStep(action).env ?? {};
 
   test("supplies everything the CLI requires", () => {
-    for (const name of ["HCLOUD_TOKEN", "VGR_GITHUB_TOKEN", "VGR_POOL", "VGR_SSH_PRIVATE_KEY"]) {
+    for (const name of ["VGR_GITHUB_TOKEN", "VGR_POOL", "VGR_SSH_PRIVATE_KEY"]) {
       expect(Object.keys(env)).toContain(name);
     }
   });
 
   test("marks the required inputs required, and the optional ones without a default", () => {
-    for (const i of ["pool", "hcloud-token", "github-token", "ssh-private-key"]) {
+    for (const i of ["pool", "github-token", "ssh-private-key"]) {
       expect(action.inputs[i]?.required).toBe(true);
     }
     for (const i of ["new-pool-label", "force"]) {
@@ -187,7 +218,7 @@ describe("release inputs and env", () => {
   });
 
   test("says in the output descriptions that billing continues", () => {
-    expect(JSON.stringify(action)).toContain("billing");
+    expect(JSON.stringify(action)).toMatch(/billing/i);
   });
 
   test("exposes exactly the outputs the command produces", async () => {
@@ -198,7 +229,7 @@ describe("release inputs and env", () => {
     });
     const { outputs } = await runRelease(
       { provider, github, registrar: new MockRegistrar(github) },
-      { repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x", sshPrivateKey: "k", newPoolLabel: "released", force: false },
+      { repo: "karimn/sia", pool: "ci", provider: { kind: "hetzner", token: "x" }, githubToken: "x", sshPrivateKey: "k", newPoolLabel: "released", force: false },
     );
     expect(Object.keys(action.outputs).sort()).toEqual(Object.keys(outputs).sort());
     for (const [name, { value }] of Object.entries(action.outputs)) {
@@ -210,6 +241,8 @@ describe("release inputs and env", () => {
 describe.each([
   ["examples/use-in-a-workflow.yml", "ensure"],
   ["examples/reaper.yml", "reap"],
+  ["examples/use-in-a-workflow-ovh.yml", "ensure"],
+  ["examples/reaper-ovh.yml", "reap"],
   ["examples/release.yml", "release"],
 ])("%s", (file, actionDir) => {
   const workflow = Bun.YAML.parse(readFileSync(join(root, file), "utf8")) as {
@@ -233,7 +266,7 @@ describe.each([
   });
 
   test("takes every token and key from a secret, never inline", () => {
-    for (const i of ["hcloud-token", "github-token", "ssh-private-key"]) {
+    for (const i of ["hcloud-token", "ovh-application-credential-id", "ovh-application-credential-secret", "github-token", "ssh-private-key"]) {
       const v = step?.with?.[i];
       if (v !== undefined) expect(v).toMatch(/^\$\{\{\s*secrets\.\w+\s*\}\}$/);
     }

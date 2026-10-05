@@ -3,8 +3,12 @@
 #
 # It deregisters the VM's runners, removes their services, and relabels and
 # renames the VM so the reaper and ensure no longer treat it as theirs. After
-# that NOTHING in this repo deletes it: Hetzner keeps billing until whoever
+# that NOTHING in this repo deletes it: the cloud keeps billing until whoever
 # takes it over deletes it (use the server_id output).
+#
+# This example uses Hetzner. For OVH (the default provider), drop provider and
+# hcloud-token and give location, ovh-application-credential-id and
+# ovh-application-credential-secret, as in examples/reaper-ovh.yml.
 #
 # Do not run this on the pool's own runners: the job would be the busy runner it
 # refuses on. Use a GitHub-hosted runner, or any runner outside the pool. It
@@ -30,6 +34,7 @@ jobs:
         uses: karimn/vm-gh-runners/release@main
         with:
           pool: ci
+          provider: hetzner
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
           github-token: ${{ secrets.VGR_GITHUB_TOKEN }}
           ssh-private-key: ${{ secrets.VGR_SSH_PRIVATE_KEY }}

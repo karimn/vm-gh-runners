@@ -142,3 +142,71 @@ describe("reap", () => {
     expect([...provider.servers.values()].map((s) => s.name).sort()).toEqual(["busy-one", "elsewhere"]);
   });
 });
+
+describe("reap on a provider billed by runtime", () => {
+  beforeEach(() => {
+    provider = new MockProvider(() => t0, "prorated");
+  });
+
+  test("deletes an idle server straight away, deregistering its runners first", async () => {
+    await addServerWithRunners("srv");
+    const [r] = await reap(provider, github, cfg, at(2));
+
+    expect(r).toMatchObject({ action: "deleted", reason: "deleted" });
+    expect(provider.servers.size).toBe(0);
+    expect(github.runners.size).toBe(0);
+  });
+
+  test("ignores a configured window start", async () => {
+    await addServerWithRunners("srv");
+    const [r] = await reap(provider, github, { ...cfg, windowStartMinute: 55 }, at(2));
+    expect(r?.action).toBe("deleted");
+  });
+
+  test("still keeps a server with a busy runner", async () => {
+    await addServerWithRunners("srv", [11]);
+    const [r] = await reap(provider, github, cfg, at(2));
+    expect(r).toMatchObject({ action: "kept", reason: "busy" });
+    expect(provider.servers.size).toBe(1);
+  });
+
+  test("still keeps a server while the repo has other runs in flight", async () => {
+    await addServerWithRunners("srv");
+    github.activeRuns = true;
+    const [r] = await reap(provider, github, cfg, at(2));
+    expect(r).toMatchObject({ action: "kept", reason: "active-runs" });
+  });
+
+  test("deletes a server that errored, which would otherwise bill unseen", async () => {
+    const s = await addServerWithRunners("srv");
+    provider.servers.set(s.id, { ...s, status: "error" });
+    const [r] = await reap(provider, github, cfg, at(2));
+    expect(r?.action).toBe("deleted");
+    expect(provider.servers.size).toBe(0);
+  });
+});
+
+describe("reap of a server that errored", () => {
+  const errored = async () => {
+    const s = await addServerWithRunners("srv");
+    provider.servers.set(s.id, { ...s, status: "error" });
+  };
+
+  test("deletes it even outside the paid-hour window, since it bills and runs nothing", async () => {
+    await errored();
+    expect((await reap(provider, github, cfg, at(20)))[0]).toMatchObject({ action: "deleted", reason: "deleted" });
+    expect(provider.servers.size).toBe(0);
+  });
+
+  test("does not wait for the repo's other runs to finish", async () => {
+    await errored();
+    github.activeRuns = true;
+    expect((await reap(provider, github, cfg, at(20)))[0]?.action).toBe("deleted");
+  });
+
+  test("still deregisters its runners first", async () => {
+    await errored();
+    await reap(provider, github, cfg, at(20));
+    expect(github.runners.size).toBe(0);
+  });
+});

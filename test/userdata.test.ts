@@ -12,6 +12,7 @@ import {
 const parse = (userData: string) => {
   const doc = Bun.YAML.parse(userData) as {
     ssh_pwauth: boolean;
+    disable_root: boolean;
     write_files: { path: string; permissions: string; content: string }[];
     runcmd: unknown[];
   };
@@ -31,6 +32,10 @@ describe("buildUserData", () => {
 
   test("turns password login off", () => {
     expect(parse(buildUserData()).doc.ssh_pwauth).toBe(false);
+  });
+
+  test("lets the injected key log in as root, which the registrar does and OVH's images forbid by default", () => {
+    expect(parse(buildUserData()).doc.disable_root).toBe(false);
   });
 
   test("the setup script is valid bash", async () => {

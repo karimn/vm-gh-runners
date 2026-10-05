@@ -1,5 +1,6 @@
 # Copy into the consuming repo's .github/workflows/ next to the workflow that
-# calls the ensure action. Uses the same three secrets.
+# calls the ensure action. Uses the same three secrets. This is the Hetzner
+# version; for OVH, which bills by runtime, see examples/reaper-ovh.yml.
 #
 # Deletes the pool's idle VMs in the last minutes of their paid hour. The window
 # is the last 10 minutes by default, so this must run at least every 5 minutes:
@@ -20,11 +21,18 @@ on:
 
 jobs:
   reap:
+    # NOT a pool runner. The pool's own runners are self-hosted too, so a bare
+    # `self-hosted` can land this job on one of them; the reaper then makes that
+    # runner busy and keeps the server it is meant to delete, tick after tick.
+    # Give your own (non-pool) runners a custom label and list it here, e.g.
+    # `runs-on: [self-hosted, my-laptop]`. Pool runners carry only `self-hosted`,
+    # `vm-gh-runners` and `pool-<pool>`.
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
       - uses: karimn/vm-gh-runners/reap@main
         with:
           pool: ci
+          provider: hetzner
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
           github-token: ${{ secrets.VGR_GITHUB_TOKEN }}

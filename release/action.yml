@@ -2,16 +2,42 @@ name: vm-gh-runners release
 description: >-
   Hand the pool's server to another owner. Deregisters its runners, removes the
   runner services, and relabels and renames the server so reap and ensure no
-  longer see it. Hetzner billing continues until the new owner deletes the
-  server; nothing in this repo will.
+  longer see it. Billing continues until the new owner deletes the server;
+  nothing in this repo will.
 
 inputs:
   pool:
     description: The pool whose server to release. Must match the one given to ensure.
     required: true
+  provider:
+    description: >-
+      Cloud to run on, ovh or hetzner. Defaults to ovh. Each needs its own
+      credentials, below; the other provider's can be left unset. A caller that
+      uses Hetzner must set this to hetzner.
+    required: false
   hcloud-token:
-    description: Hetzner project API token (read and write). Pass it from a secret.
-    required: true
+    description: Hetzner project API token (read and write). Required when provider is hetzner. Pass it from a secret.
+    required: false
+  ovh-application-credential-id:
+    description: >-
+      ID of an OVH application credential created as unrestricted, so it can
+      create and delete servers. Required when provider is ovh.
+    required: false
+  ovh-application-credential-secret:
+    description: Secret of that OVH application credential. Required when provider is ovh. Pass it from a secret.
+    required: false
+  ovh-auth-url:
+    description: >-
+      OVH Keystone v3 URL. Defaults to https://auth.cloud.ovh.us/v3, the OVH US
+      account's; an EU account needs https://auth.cloud.ovh.net/v3. The
+      credential is sent here, so it must be https.
+    required: false
+  location:
+    description: >-
+      OVH region (such as US-EAST-VA-1) whose servers to consider; it must match
+      the one given to ensure. Defaults to US-EAST-VA-1. Ignored for Hetzner,
+      which lists the whole project.
+    required: false
   github-token:
     description: >-
       Token that can manage this repo's runners (fine-grained PAT with
@@ -55,7 +81,12 @@ runs:
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
+        VGR_PROVIDER: ${{ inputs.provider }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.ovh-application-credential-id }}
+        OS_APPLICATION_CREDENTIAL_SECRET: ${{ inputs.ovh-application-credential-secret }}
+        OS_AUTH_URL: ${{ inputs.ovh-auth-url }}
+        VGR_LOCATION: ${{ inputs.location }}
         VGR_GITHUB_TOKEN: ${{ inputs.github-token }}
         VGR_POOL: ${{ inputs.pool }}
         VGR_SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}

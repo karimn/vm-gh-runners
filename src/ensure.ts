@@ -44,7 +44,10 @@ export const serverName = (cfg: Pick<EnsureConfig, "pool" | "repo">): string => 
 };
 
 export interface EnsureOptions {
-  /** How many times to re-check after losing a create race. Default 30. */
+  /**
+   * How many times to re-check after losing a create race, or after finding a
+   * server another run is still building. Default 30.
+   */
   readonly conflictAttempts?: number;
   /** Wait between re-checks. Default 10 s: enough for a deleted server to free its name. */
   readonly conflictDelayMs?: number;
@@ -74,13 +77,23 @@ export const ensureServer = async (
   } = options;
   const labels = serverLabels(cfg.pool, cfg.repo);
   const name = serverName(cfg);
+  let unaddressed: Server | undefined;
 
   for (let attempt = 1; attempt <= conflictAttempts; attempt++) {
     const live = (await provider.listServers(labels))
       .filter((s) => LIVE.has(s.status))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     const existing = live[0];
-    if (existing) return { server: existing, created: false };
+    if (existing?.address !== undefined) return { server: existing, created: false };
+    if (existing) {
+      // Another run created it and the provider has not assigned an address yet
+      // (OpenStack servers appear before they have one). It cannot be registered
+      // against until it does, so wait rather than create a second server.
+      unaddressed = existing;
+      if (attempt < conflictAttempts) await sleep(conflictDelayMs);
+      continue;
+    }
+    unaddressed = undefined;
 
     try {
       const server = await provider.createServer({
@@ -96,6 +109,11 @@ export const ensureServer = async (
       if (!(e instanceof ServerExistsError)) throw e;
       if (attempt < conflictAttempts) await sleep(conflictDelayMs);
     }
+  }
+  if (unaddressed) {
+    throw new Error(
+      `server ${unaddressed.name} (${unaddressed.id}) still has no address after ${conflictAttempts} checks`,
+    );
   }
   throw new Error(
     `a server named "${name}" already exists but is not a live server of pool "${cfg.pool}" ` +

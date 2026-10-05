@@ -4,6 +4,7 @@ import { loadEnsureConfig, loadReapConfig, loadReleaseConfig } from "../src/conf
 const base = {
   GITHUB_REPOSITORY: "karimn/sia",
   VGR_POOL: "ci",
+  VGR_PROVIDER: "hetzner",
   HCLOUD_TOKEN: "hz-secret",
   VGR_GITHUB_TOKEN: "gh-secret",
   VGR_SERVER_TYPE: "cpx62",
@@ -16,7 +17,7 @@ describe("loadEnsureConfig", () => {
     expect(loadEnsureConfig(base)).toEqual({
       repo: "karimn/sia",
       pool: "ci",
-      hcloudToken: "hz-secret",
+      provider: { kind: "hetzner", token: "hz-secret" },
       githubToken: "gh-secret",
       serverType: "cpx62",
       image: "ubuntu-24.04",
@@ -116,6 +117,7 @@ describe("loadReapConfig", () => {
   const reapBase = {
     GITHUB_REPOSITORY: "karimn/sia",
     VGR_POOL: "ci",
+    VGR_PROVIDER: "hetzner",
     HCLOUD_TOKEN: "hz-secret",
     VGR_GITHUB_TOKEN: "gh-secret",
   };
@@ -124,7 +126,7 @@ describe("loadReapConfig", () => {
     expect(loadReapConfig(reapBase)).toEqual({
       repo: "karimn/sia",
       pool: "ci",
-      hcloudToken: "hz-secret",
+      provider: { kind: "hetzner", token: "hz-secret" },
       githubToken: "gh-secret",
     });
   });
@@ -150,6 +152,7 @@ describe("loadReleaseConfig", () => {
   const relBase = {
     GITHUB_REPOSITORY: "karimn/sia",
     VGR_POOL: "ci",
+    VGR_PROVIDER: "hetzner",
     HCLOUD_TOKEN: "hz-secret",
     VGR_GITHUB_TOKEN: "gh-secret",
     VGR_SSH_PRIVATE_KEY: "PRIVATE-KEY-BODY",
@@ -159,7 +162,7 @@ describe("loadReleaseConfig", () => {
     expect(loadReleaseConfig(relBase)).toEqual({
       repo: "karimn/sia",
       pool: "ci",
-      hcloudToken: "hz-secret",
+      provider: { kind: "hetzner", token: "hz-secret" },
       githubToken: "gh-secret",
       sshPrivateKey: "PRIVATE-KEY-BODY",
       newPoolLabel: "released",
@@ -194,5 +197,119 @@ describe("loadReleaseConfig", () => {
   test("errors never contain a secret value", () => {
     const err = (() => { try { loadReleaseConfig({ ...relBase, VGR_FORCE: "nope" }); } catch (e) { return String(e); } return ""; })();
     for (const s of ["hz-secret", "gh-secret", "PRIVATE-KEY-BODY"]) expect(err).not.toContain(s);
+  });
+});
+
+describe("provider selection", () => {
+  const ovh = {
+    ...base,
+    HCLOUD_TOKEN: undefined,
+    VGR_PROVIDER: "ovh",
+    OS_APPLICATION_CREDENTIAL_ID: "cred-id",
+    OS_APPLICATION_CREDENTIAL_SECRET: "cred-secret",
+    VGR_SERVER_TYPE: "b3-32",
+    VGR_SSH_KEY_NAMES: "sia-ci-key",
+  };
+
+  test("defaults to ovh, and treats a blank provider as unset (an unset action input)", () => {
+    expect(loadEnsureConfig(ovh).provider.kind).toBe("ovh");
+    expect(loadEnsureConfig({ ...ovh, VGR_PROVIDER: "" }).provider.kind).toBe("ovh");
+    expect(loadEnsureConfig({ ...ovh, VGR_PROVIDER: undefined }).provider.kind).toBe("ovh");
+  });
+
+  test("a caller that gives only a Hetzner token must now say provider: hetzner", () => {
+    const { VGR_PROVIDER: _, ...noProvider } = base;
+    expect(() => loadEnsureConfig(noProvider)).toThrow("OS_APPLICATION_CREDENTIAL_ID");
+  });
+
+  test("rejects an unknown provider, naming the choices", () => {
+    expect(() => loadEnsureConfig({ ...base, VGR_PROVIDER: "aws" })).toThrow("hetzner or ovh");
+  });
+
+  test("hetzner still needs its token, and an OVH credential does not substitute", () => {
+    const { HCLOUD_TOKEN: _, ...rest } = base;
+    expect(() => loadEnsureConfig({ ...rest, OS_APPLICATION_CREDENTIAL_ID: "x", OS_APPLICATION_CREDENTIAL_SECRET: "y" })).toThrow("HCLOUD_TOKEN");
+  });
+
+  test("ovh reads the application credential and defaults to OVH US, Ubuntu 24.04", () => {
+    expect(loadEnsureConfig(ovh)).toMatchObject({
+      provider: {
+        kind: "ovh",
+        authUrl: "https://auth.cloud.ovh.us/v3",
+        credentialId: "cred-id",
+        credentialSecret: "cred-secret",
+        region: "US-EAST-VA-1",
+      },
+      image: "Ubuntu 24.04",
+      location: "US-EAST-VA-1",
+      serverType: "b3-32",
+      sshKeyNames: ["sia-ci-key"],
+    });
+  });
+
+  test("ovh does not need HCLOUD_TOKEN, and hetzner does not need the OVH credential", () => {
+    expect(() => loadEnsureConfig(ovh)).not.toThrow();
+    expect(() => loadEnsureConfig(base)).not.toThrow();
+  });
+
+  test("ovh names the missing credential variable", () => {
+    expect(() => loadEnsureConfig({ ...ovh, OS_APPLICATION_CREDENTIAL_SECRET: "" })).toThrow("OS_APPLICATION_CREDENTIAL_SECRET");
+    expect(() => loadEnsureConfig({ ...ovh, OS_APPLICATION_CREDENTIAL_ID: undefined })).toThrow("OS_APPLICATION_CREDENTIAL_ID");
+  });
+
+  test("ovh takes the region from the location, then OS_REGION_NAME, and honours an EU auth URL and image", () => {
+    expect(loadEnsureConfig({ ...ovh, VGR_LOCATION: "GRA11" }).provider).toMatchObject({ region: "GRA11" });
+    expect(loadEnsureConfig({ ...ovh, VGR_LOCATION: "GRA11" }).location).toBe("GRA11");
+    expect(loadEnsureConfig({ ...ovh, OS_REGION_NAME: "SBG5" }).provider).toMatchObject({ region: "SBG5" });
+    const eu = loadEnsureConfig({ ...ovh, OS_AUTH_URL: "https://auth.cloud.ovh.net/v3", VGR_IMAGE: "Debian 12" });
+    expect(eu.provider).toMatchObject({ authUrl: "https://auth.cloud.ovh.net/v3" });
+    expect(eu.image).toBe("Debian 12");
+  });
+
+  test("ovh refuses an auth URL that is not https, since the credential is sent there", () => {
+    expect(() => loadEnsureConfig({ ...ovh, OS_AUTH_URL: "http://auth.example/v3" })).toThrow("https");
+  });
+
+  test("ovh needs exactly one SSH key name", () => {
+    expect(() => loadEnsureConfig({ ...ovh, VGR_SSH_KEY_NAMES: "a, b" })).toThrow("exactly one");
+  });
+
+  test("an error never contains the OVH secret", () => {
+    for (const bad of [
+      () => loadEnsureConfig({ ...ovh, OS_AUTH_URL: "http://cred-secret.example/v3" }),
+      () => loadEnsureConfig({ ...ovh, VGR_SSH_KEY_NAMES: "" }),
+      () => loadEnsureConfig({ ...ovh, VGR_RUNNER_COUNT: "x" }),
+    ]) {
+      try {
+        bad();
+      } catch (e) {
+        expect((e as Error).message).not.toContain("cred-secret");
+      }
+    }
+  });
+
+  const reapOvh = {
+    GITHUB_REPOSITORY: "karimn/sia",
+    VGR_POOL: "ci",
+    VGR_GITHUB_TOKEN: "gh",
+    VGR_PROVIDER: "ovh",
+    OS_APPLICATION_CREDENTIAL_ID: "cred-id",
+    OS_APPLICATION_CREDENTIAL_SECRET: "cred-secret",
+  };
+
+  test("reap and release on ovh get the region from the location too", () => {
+    expect(loadReapConfig(reapOvh).provider).toMatchObject({ kind: "ovh", region: "US-EAST-VA-1" });
+    expect(loadReapConfig({ ...reapOvh, VGR_LOCATION: "GRA11" }).provider).toMatchObject({ region: "GRA11" });
+    expect(loadReleaseConfig({ ...reapOvh, VGR_SSH_PRIVATE_KEY: "k" }).provider).toMatchObject({ kind: "ovh" });
+  });
+
+  test("a window start is an error on ovh, not silently ignored", () => {
+    expect(() => loadReapConfig({ ...reapOvh, VGR_WINDOW_START_MINUTE: "45" })).toThrow("no effect on ovh");
+    expect(loadReapConfig({ ...reapOvh, VGR_WINDOW_START_MINUTE: "" }).windowStartMinute).toBeUndefined();
+  });
+
+  test("a window start is still honoured on hetzner, and a stray location is ignored there", () => {
+    const hz = { VGR_PROVIDER: "hetzner", GITHUB_REPOSITORY: "karimn/sia", VGR_POOL: "ci", VGR_GITHUB_TOKEN: "gh", HCLOUD_TOKEN: "t" };
+    expect(loadReapConfig({ ...hz, VGR_WINDOW_START_MINUTE: "45", VGR_LOCATION: "US-EAST-VA-1" }).windowStartMinute).toBe(45);
   });
 });

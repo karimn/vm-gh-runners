@@ -40,3 +40,26 @@ describe("shouldReap", () => {
     expect(ageMinutes(created, at(30))).toBe(0);
   });
 });
+
+describe("shouldReap on a provider billed by runtime", () => {
+  const prorated = { createdAt: created, billing: "prorated" } as const;
+
+  test("an idle server is reaped at any age, with no paid hour to wait out", () => {
+    for (const m of [0, 1, 10, 49.9, 60, 80, 125]) {
+      expect(shouldReap({ ...prorated, now: at(m), busy: false })).toBe(true);
+    }
+  });
+
+  test("a busy server is still never reaped", () => {
+    expect(shouldReap({ ...prorated, now: at(30), busy: true })).toBe(false);
+  });
+
+  test("the window start is ignored", () => {
+    expect(shouldReap({ ...prorated, now: at(5), busy: false, windowStartMinute: 55 })).toBe(true);
+  });
+
+  test("per-started-hour stays the default", () => {
+    expect(shouldReap({ now: at(5), createdAt: created, busy: false })).toBe(false);
+    expect(shouldReap({ now: at(5), createdAt: created, busy: false, billing: "per-started-hour" })).toBe(false);
+  });
+});
