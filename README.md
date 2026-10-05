@@ -16,7 +16,7 @@ Three composite actions, called from CI workflows:
   [OVH example](examples/use-in-a-workflow-ovh.yml) (with a teardown job that
   deletes the VM as soon as the tests finish),
   [Hetzner example](examples/use-in-a-workflow.yml).
-- [`reap/`](reap/action.yml) deletes idle VMs: in the last minutes of their paid
+- [`reap/`](reap/action.yml) deletes idle VMs (or, with `run-id`, one run's VM): in the last minutes of their paid
   hour on Hetzner, at once on OVH (see [Providers](#providers)). Run it on a
   schedule, at least every 5 minutes. [OVH example](examples/reaper-ovh.yml),
   [Hetzner example](examples/reaper.yml).
@@ -28,6 +28,55 @@ Three composite actions, called from CI workflows:
   busy or other runs are active (`force` skips those checks; GitHub still will not
   remove a busy runner). It needs the same SSH key as `ensure`.
   [Example](examples/release.yml).
+
+## One VM per run, or one shared VM
+
+By default every run of a repo shares the pool's one VM, and its jobs share the
+VM's runners. Runs then overlap: a second run's jobs queue behind the first's,
+and a teardown or reap triggered by one run can delete the VM while the other is
+still using it.
+
+Give `ensure` the run's id and each workflow run gets **its own VM**:
+
+```yaml
+- uses: karimn/vm-gh-runners/ensure@main
+  with:
+    pool: ci
+    run-id: ${{ github.run_id }}
+    # ...
+```
+
+- The run id is part of the server's identity, so two runs never get the same
+  server, and is recorded on it as the `vgr-run` label. The `pool` label stays, so
+  a scheduled reaper over the pool still finds every per-run VM.
+- Runner labels become `vm-gh-runners,pool-<pool>,run-<id>` (`run-<id>` is added to
+  a `runner-labels` list you give, if missing), and `runs_on` returns exactly
+  those, so a job can only land on its own run's runners.
+- `reap` with the same `run-id`, in the run's last job (`needs:` every job that
+  uses the VM, `if: always()`), deletes just that run's VM as soon as no runner on
+  it is busy. It does not look at other runs, and does not count its own as active.
+  See the [OVH example](examples/use-in-a-workflow-ovh.yml).
+- `reap` without `run-id`, on a schedule, is the safety net for a run that never
+  reached teardown (cancelled, crashed): a per-run VM is kept while its run is
+  queued or in progress and deleted once it is finished or gone. Optional
+  `max-age-minutes` deletes a per-run VM that old regardless, even with a busy
+  runner, so a stuck run cannot hold a VM forever. Shared-pool VMs are reaped as
+  before.
+- `release` takes `run-id` too, to hand over that run's VM.
+- A re-run of a run (same id, higher `run_attempt`) reuses the previous attempt's
+  VM if teardown has not deleted it, and otherwise creates a new one under the
+  same name. Attempts never overlap, so attempt is not part of the identity.
+- With `run-id` unset everything behaves as before.
+- On Hetzner the paid-hour window does not apply to per-run VMs: nothing will ever
+  reuse one, so waiting out the hour buys nothing and would hold one of the
+  account's five server slots.
+
+**Capacity.** Each in-flight run holds a VM. A b3-32 is 8 vCPU; the Sia.jl OVH US
+project's quota is 34 cores / 10 instances, shared with pioneer, so about 3 to 4
+per-run VMs fit at once (a fresh US project showed 3 servers / 6 vCPU, so check the
+quota first). When the project is out of quota or server slots `ensure` fails at
+once with a message naming it, rather than waiting; re-run the workflow when
+another run has finished. Hetzner accounts are capped at 5 servers.
 
 Each consuming repo needs three kinds of Actions secret: the cloud credential
 (a Hetzner project token, or an OVH application credential id and secret), a

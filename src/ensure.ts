@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { runnerName, type GithubHost } from "./github.ts";
-import { ServerExistsError, serverLabels, type Provider, type Server } from "./provider.ts";
+import { runOf, ServerExistsError, serverLabels, type Provider, type Server } from "./provider.ts";
 import type { RunnerRegistrar } from "./registrar.ts";
 
 export interface EnsureConfig {
@@ -12,6 +12,17 @@ export interface EnsureConfig {
   readonly image: string;
   readonly location: string;
   readonly userData: string;
+  /**
+   * The workflow run that owns the server (`github.run_id`). When set, the run
+   * is part of the server's identity, so each run gets its own server and never
+   * reuses another run's. Unset is shared-pool mode: one server per pool and repo.
+   *
+   * A re-run of the same run id (`run_attempt` 2, 3, ...) deliberately maps to the
+   * same identity: attempts never overlap, so it reuses the previous attempt's
+   * server if teardown has not deleted it yet, and otherwise creates a fresh one
+   * under the same name.
+   */
+  readonly runId?: string;
 }
 
 export interface EnsureResult {
@@ -31,10 +42,10 @@ const HASH_LENGTH = 8;
  * is truncated if long; the hash of the exact pool and repo keeps distinct
  * pools and repos distinct even when their prefixes slug alike or get cut.
  */
-export const serverName = (cfg: Pick<EnsureConfig, "pool" | "repo">): string => {
+export const serverName = (cfg: Pick<EnsureConfig, "pool" | "repo" | "runId">): string => {
   const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const hash = createHash("sha256")
-    .update(`${cfg.pool}\0${cfg.repo}`)
+    .update(cfg.runId === undefined ? `${cfg.pool}\0${cfg.repo}` : `${cfg.pool}\0${cfg.repo}\0${cfg.runId}`)
     .digest("hex")
     .slice(0, HASH_LENGTH);
   const prefix = `${slug(cfg.pool)}-${slug(cfg.repo)}`
@@ -75,13 +86,15 @@ export const ensureServer = async (
     conflictDelayMs = 10_000,
     sleep = (ms) => new Promise<void>((r) => setTimeout(r, ms)),
   } = options;
-  const labels = serverLabels(cfg.pool, cfg.repo);
+  const labels = serverLabels(cfg.pool, cfg.repo, cfg.runId);
   const name = serverName(cfg);
   let unaddressed: Server | undefined;
 
   for (let attempt = 1; attempt <= conflictAttempts; attempt++) {
     const live = (await provider.listServers(labels))
       .filter((s) => LIVE.has(s.status))
+      // The pool selector also matches per-run servers; shared-pool mode must not adopt one.
+      .filter((s) => cfg.runId !== undefined || runOf(s) === undefined)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     const existing = live[0];
     if (existing?.address !== undefined) return { server: existing, created: false };
@@ -117,7 +130,7 @@ export const ensureServer = async (
   }
   throw new Error(
     `a server named "${name}" already exists but is not a live server of pool "${cfg.pool}" ` +
-      `for ${cfg.repo}; gave up after ${conflictAttempts} checks`,
+      `for ${cfg.repo}${cfg.runId === undefined ? "" : ` and run ${cfg.runId}`}; gave up after ${conflictAttempts} checks`,
   );
 };
 

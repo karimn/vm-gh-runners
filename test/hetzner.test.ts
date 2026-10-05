@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { HetznerApiError, HetznerProvider } from "../src/hetzner.ts";
-import { ServerExistsError, type CreateServerSpec } from "../src/provider.ts";
+import { QuotaExceededError, ServerExistsError, type CreateServerSpec } from "../src/provider.ts";
 
 interface Recorded {
   method: string;
@@ -141,8 +141,9 @@ describe("createServer", () => {
       body: { error: { code: "resource_limit_exceeded", message: "server limit reached" } },
     }));
     const err = await hz.createServer(spec).catch((e) => e);
-    expect(err.code).toBe("resource_limit_exceeded");
+    expect(err).toBeInstanceOf(QuotaExceededError);
     expect(err.message).toContain("server limit reached");
+    expect(err.message).toContain("no capacity");
   });
 
   test("never puts the token in an error", async () => {

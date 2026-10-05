@@ -62,8 +62,16 @@ inputs:
       Server location. On Hetzner it defaults to nbg1; on OVH it is the region
       and defaults to US-EAST-VA-1.
     required: false
+  run-id:
+    description: >-
+      The workflow run that owns the server; pass the run's id from the github
+      context. With it, this run gets its OWN server, never another run's: the run id is part of the server's identity and is recorded on it (label vgr-run), the runner labels gain run-<id>, and the runs_on output returns labels only this run's runners have. The pool label stays, so a scheduled reaper over the pool still finds it. A re-run of the same run id reuses the previous attempt's server if it still exists, else creates a new one. Leave it unset for the shared-pool mode, where every run of the repo shares one server. Each per-run server needs a slot in the project quota; ensure fails at once, naming the quota, when there is none.
+    required: false
   runner-labels:
-    description: Comma-separated runner labels. Defaults to "vm-gh-runners,pool-<pool>".
+    description: >-
+      Comma-separated runner labels. Defaults to "vm-gh-runners,pool-<pool>",
+      plus run-<run-id> when run-id is set (it is appended to a list you give if
+      missing, so runs cannot share runners).
     required: false
   runner-version:
     description: Runner version such as 2.321.0, or "latest" (the default). Pin it for repeatable builds.
@@ -87,7 +95,8 @@ outputs:
     value: ${{ steps.cli.outputs.registered }}
   runs_on:
     description: >-
-      JSON array of labels for the jobs that should use the VM. Pass it
+      JSON array of labels for the jobs that should use the VM. With run-id
+      set, they match only this run's runners. Pass it
       through the fromJSON function in a later job's runs-on (see
       examples/use-in-a-workflow.yml). It is not written out as an expression
       here because GitHub evaluates expressions in action descriptions.
@@ -118,6 +127,7 @@ runs:
         VGR_RUNNER_COUNT: ${{ inputs.runner-count }}
         VGR_IMAGE: ${{ inputs.image }}
         VGR_LOCATION: ${{ inputs.location }}
+        VGR_RUN_ID: ${{ inputs.run-id }}
         VGR_RUNNER_LABELS: ${{ inputs.runner-labels }}
         VGR_RUNNER_VERSION: ${{ inputs.runner-version }}
         VGR_EXTRA_PACKAGES: ${{ inputs.extra-packages }}

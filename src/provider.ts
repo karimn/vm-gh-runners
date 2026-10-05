@@ -90,10 +90,21 @@ export const labelsMatch = (labels: Labels, selector: Labels): boolean =>
  * `-`, `_`, `.`, at most 63 chars), so `owner/name` becomes `owner_name`. That
  * is unambiguous because GitHub owner names cannot contain `_`.
  */
-export const serverLabels = (pool: string, repo: string): Labels => ({
+export const serverLabels = (pool: string, repo: string, runId?: string): Labels => ({
   pool,
   repo: repo.replace("/", "_"),
+  ...(runId === undefined ? {} : { [RUN_LABEL]: runId }),
 });
+
+/**
+ * Marks a server as belonging to one workflow run (`run-id` input). The pool
+ * label stays on it, so a scheduled reaper over the pool still finds it. A
+ * server without this label is a shared-pool server.
+ */
+export const RUN_LABEL = "vgr-run";
+
+/** The workflow run that owns this server, or undefined for a shared-pool server. */
+export const runOf = (server: Server): string | undefined => server.labels[RUN_LABEL];
 
 /**
  * Thrown by `createServer` when a server with that name already exists. A
@@ -105,5 +116,21 @@ export class ServerExistsError extends Error {
   constructor(readonly serverName: string) {
     super(`a server named "${serverName}" already exists`);
     this.name = "ServerExistsError";
+  }
+}
+
+/**
+ * Thrown by `createServer` when the provider refuses because the project's quota
+ * or server limit is used up (OVH: cores/instances; Hetzner: the server limit).
+ * Waiting would not help until another VM is deleted, so `ensure` fails at once
+ * with the provider's own message instead of retrying.
+ */
+export class QuotaExceededError extends Error {
+  constructor(readonly detail: string) {
+    super(
+      `the cloud project has no capacity for another server (quota or server limit reached): ${detail}. ` +
+        "Per-run VMs need one slot each; wait for other runs to finish, or raise the quota.",
+    );
+    this.name = "QuotaExceededError";
   }
 }

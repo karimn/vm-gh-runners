@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { OvhApiError, OvhProvider } from "../src/ovh.ts";
-import { ServerExistsError, type CreateServerSpec } from "../src/provider.ts";
+import { QuotaExceededError, ServerExistsError, type CreateServerSpec } from "../src/provider.ts";
 
 const AUTH = "https://auth.example.test/v3";
 const REGION = "US-EAST-VA-1";
@@ -301,6 +301,23 @@ describe("createServer", () => {
       metadata: spec.labels,
       key_name: "sia-ci-key",
     });
+  });
+
+  test("turns Nova's quota refusal into a QuotaExceededError naming the quota", async () => {
+    const { cloud } = make();
+    const quotaFetch = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "POST" && new URL(String(input)).pathname === "/v2.1/servers"
+        ? new Response(
+            JSON.stringify({ forbidden: { code: 403, message: "Quota exceeded for cores: Requested 8, but already used 32 of 34 cores" } }),
+            { status: 403, headers: { "content-type": "application/json" } },
+          )
+        : cloud.fetch(input, init)) as typeof fetch;
+    const { ovh } = make(cloud, { fetch: quotaFetch });
+    const err = await ovh.createServer(spec).catch((e) => e);
+
+    expect(err).toBeInstanceOf(QuotaExceededError);
+    expect(err.message).toContain("Quota exceeded for cores");
+    expect(cloud.servers).toHaveLength(0);
   });
 
   test("base64-encodes the user data, which Nova requires", async () => {

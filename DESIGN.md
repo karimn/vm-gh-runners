@@ -68,6 +68,54 @@ scheduled workflow calls `reap`.
   when zero or several servers match, or the server is not running. Nothing
   deletes a released server; the new owner must, or it bills indefinitely.
 
+## One server per workflow run
+
+Shared-pool mode (the default) has a flaw: two runs of one repo share the VM and
+its runners. On 2026-10-05 two PR runs of Sia.jl used one pool; the second reused
+the first's VM and waited about 15 minutes for free runners, and when one run's
+teardown ran, the VM was deleted under the other's jobs.
+
+`run-id` (`github.run_id`) on `ensure`, `reap` and `release` switches to one VM per
+run:
+
+- Identity. The run id goes into the name hash, so each run's server has its own
+  name and `ensureServer` converges concurrent callers of one run (the lock) while
+  separating runs. The server also gets the label `vgr-run=<id>`; `pool` and
+  `repo` stay. Shared-pool `ensure` and `release` ignore servers with `vgr-run`,
+  so the two modes never adopt each other's servers.
+- Isolation. Default runner labels gain `run-<id>` (appended to a caller's own
+  list if missing); `runs_on` returns the same labels. GitHub schedules a job only
+  onto a runner that has all of its labels, so jobs cannot cross runs.
+- Teardown (`reap` with `run-id`). Only that run's server. The repo-wide
+  active-runs guard is replaced by "the run's own jobs are done", which is true
+  because teardown is the run's last job; the run is not counted. A busy runner
+  still keeps the server (deregistration enforces it).
+- Safety net (`reap` without `run-id`). A run-labelled server is kept while
+  `GET /actions/runs/{id}` says the run is not completed, and deleted when it is
+  completed (including cancelled) or 404, which covers runs whose teardown never
+  ran. A failed lookup is an error for that server only. `max-age-minutes`
+  (default off) deletes an older run-labelled server whatever its run is doing,
+  deregistering what it can: the guards are what a stuck run breaks. Servers with
+  no run label keep the repo-wide behaviour.
+- Billing. A per-run server is never reused, so the Hetzner paid-hour window is
+  skipped for it: waiting buys nothing and holds one of the 5 account slots. OVH
+  was already delete-at-once. The scheduled reaper's 5-minute cadence matters less
+  on Hetzner for per-run servers, since teardown deletes them directly.
+- Re-runs. The attempt is not part of the identity. Attempts of one run never
+  overlap, so a re-run reuses the previous attempt's server if teardown has not
+  deleted it, else creates a new one under the same name (Hetzner waits out a
+  server still being deleted, as in "Concurrency").
+- `release` with `run-id` hands over that run's server and skips the repo-wide
+  guard; the relabel drops `vgr-run`, so nothing reaps it afterwards.
+- Capacity. Concurrent runs are bounded by the project's quota, not by anything
+  here. OVH US (Sia.jl's project) is 34 cores / 10 instances shared with pioneer,
+  so about 3 to 4 b3-32 (8 vCPU) VMs. A refusal for quota or the server limit
+  (OpenStack 403/413 "Quota exceeded", Hetzner `resource_limit_exceeded`) becomes
+  `QuotaExceededError`, and `ensure` fails at once with the provider's message
+  instead of retrying: waiting cannot help until another run finishes.
+- The `ensure` job should not run on the pool's own runners (it could land on
+  another run's VM and hold a runner there).
+
 ## GitHub token permissions
 
 `github-token` is a fine-grained PAT on the consuming repo. The workflow's own
@@ -80,6 +128,7 @@ the permission it needs:
 | `POST /actions/runners/registration-token` | ensure | Administration: write |
 | `DELETE /actions/runners/{id}` | reap, release | Administration: write |
 | `GET /actions/runs?status=queued\|in_progress` | reap, release | Actions: read |
+| `GET /actions/runs/{id}` | reap (scheduled, per-run servers) | Actions: read |
 
 So the PAT needs **Administration read and write AND Actions read**. Missing
 Actions read made `reap` fail on 2026-10-05 and left a billed VM running. `reap`
@@ -144,7 +193,8 @@ rather than creating a second.
   `ensure` that runs between release's guards and its relabel can re-register
   runners that release then uninstalls; narrow, and the active-runs guard makes it
   rare. `force` cannot release a busy runner, since GitHub refuses to deregister it.
-- A server left by a crashed run is reaped at the end of its paid hour (Hetzner) or at the next reap (OVH).
+- A server left by a crashed run is reaped at the end of its paid hour (Hetzner) or at the next reap (OVH). A per-run server is reaped at the next scheduled reap once its run is completed.
+- Per-run mode: a run that is queued behind a manual-approval gate counts as active and keeps its server until `max-age-minutes`, if set. A re-run triggered in the instant after the scheduled reaper saw its run completed but before the delete can lose its VM; narrow, and the next `ensure` creates a new one.
 - The reaper (and any teardown job) must not run on one of the pool's own runners: it would be the busy
   runner that makes reap keep the server. Pool runners are `self-hosted` like any
   other, so its `runs-on` needs a label only non-pool runners have, or a

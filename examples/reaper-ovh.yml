@@ -2,8 +2,11 @@
 # repo's .github/workflows/ next to the workflow that calls the ensure action.
 #
 # This is the safety net, not the main path: the `teardown` job in
-# examples/use-in-a-workflow-ovh.yml deletes the VM as soon as the tests finish.
-# This catches the VMs that never reached teardown, such as a cancelled run.
+# examples/use-in-a-workflow-ovh.yml deletes the run's VM as soon as the tests
+# finish. This catches the VMs that never reached teardown, such as a cancelled
+# run. No run-id here: it sweeps the whole pool. A per-run VM (made by ensure
+# with run-id) is kept while its run is queued or in progress and deleted once the
+# run is finished or gone. max-age-minutes caps a stuck run.
 #
 # OVH bills a server for the time it exists, so an idle VM is deleted at the next
 # run of this workflow, not held until the end of a paid hour. There is no
@@ -36,6 +39,9 @@ jobs:
           pool: ci
           provider: ovh # the default; shown for clarity
           location: US-EAST-VA-1
+          # Delete a per-run VM this old even if its run is still going. Pick a
+          # value well above your longest run. Unset means no limit.
+          max-age-minutes: 240
           ovh-application-credential-id: ${{ secrets.OVH_APPLICATION_CREDENTIAL_ID }}
           ovh-application-credential-secret: ${{ secrets.OVH_APPLICATION_CREDENTIAL_SECRET }}
           github-token: ${{ secrets.VGR_GITHUB_TOKEN }}

@@ -119,6 +119,27 @@ describe("hasActiveRuns", () => {
   });
 });
 
+describe("runState", () => {
+  const run = (status: string | null) => ({ body: { id: 7, status } });
+
+  test("is active for a queued, in-progress or waiting run", async () => {
+    for (const status of ["queued", "in_progress", "waiting", "pending", null]) {
+      expect(await client(() => run(status)).gh.runState(7)).toBe("active");
+    }
+  });
+
+  test("is finished once the run is completed, whatever its conclusion", async () => {
+    const { gh, requests } = client(() => run("completed"));
+    expect(await gh.runState(7)).toBe("finished");
+    expect(requests[0]?.url.pathname).toBe("/repos/karimn/sia/actions/runs/7");
+  });
+
+  test("is not-found on a 404, and rejects on any other failure", async () => {
+    expect(await client(() => ({ status: 404, body: { message: "Not Found" } })).gh.runState(7)).toBe("not-found");
+    await expect(client(() => ({ status: 500, body: { message: "boom" } })).gh.runState(7)).rejects.toBeInstanceOf(GithubApiError);
+  });
+});
+
 describe("deregisterRunner", () => {
   test("sends DELETE for the runner", async () => {
     const { gh, requests } = client(() => ({ status: 204 }));

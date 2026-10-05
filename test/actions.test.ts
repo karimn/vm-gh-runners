@@ -155,6 +155,12 @@ describe("ensure inputs and env", () => {
     }
   });
 
+  test("takes the run id through VGR_RUN_ID, optional", () => {
+    expect(env["VGR_RUN_ID"]).toBe("${{ inputs.run-id }}");
+    expect(action.inputs["run-id"]?.required).not.toBe(true);
+    expect(action.inputs["run-id"]?.default).toBeUndefined();
+  });
+
   test("exposes exactly the outputs the command produces", async () => {
     const github = new MockGithub();
     const { outputs } = await runEnsure(
@@ -181,6 +187,15 @@ describe("reap inputs and env", () => {
   test("marks the required inputs required", () => {
     for (const i of ["pool", "github-token"]) {
       expect(action.inputs[i]?.required).toBe(true);
+    }
+  });
+
+  test("takes run-id and max-age-minutes through env, both optional", () => {
+    expect(env["VGR_RUN_ID"]).toBe("${{ inputs.run-id }}");
+    expect(env["VGR_MAX_AGE_MINUTES"]).toBe("${{ inputs.max-age-minutes }}");
+    for (const i of ["run-id", "max-age-minutes"]) {
+      expect(action.inputs[i]?.required).not.toBe(true);
+      expect(action.inputs[i]?.default).toBeUndefined();
     }
   });
 

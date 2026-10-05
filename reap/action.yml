@@ -2,13 +2,32 @@ name: vm-gh-runners reap
 description: >-
   Delete the pool's idle servers: as soon as they are idle on OVH, which bills
   by runtime, and in the last minutes of their paid hour on Hetzner, which
-  bills per started hour. Run it on a schedule (every 5 minutes) from the
-  consuming repo.
+  bills per started hour. With run-id it deletes just that run's per-run server
+  at once (a run's teardown job); without it, run it on a schedule (every 5
+  minutes on Hetzner, every 30 on OVH) from the consuming repo as the safety
+  net that also removes per-run servers whose run is over.
 
 inputs:
   pool:
     description: The pool whose servers to consider. Must match the one given to ensure.
     required: true
+  run-id:
+    description: >-
+      Tear down only the server this run's ensure made with the same run-id (pass
+      the run's id from the github context). Use it in the run's last job, which
+      is not counted as an active run. The repo's other runs are ignored, since
+      they have servers of their own. The per-run server is deleted as soon as no
+      runner on it is busy, on any provider. Leave it unset for the scheduled
+      sweep: a per-run server is then kept while its run is queued or in
+      progress and deleted once the run is finished or gone, and shared-pool
+      servers are handled as before.
+    required: false
+  max-age-minutes:
+    description: >-
+      Sweep only (no run-id): delete a per-run server older than this many
+      minutes whatever its run is doing, even with a busy runner, so a stuck run
+      cannot hold a server forever. Unset means no limit.
+    required: false
   provider:
     description: >-
       Cloud to run on, ovh or hetzner. Defaults to ovh. Each needs its own
@@ -80,5 +99,7 @@ runs:
         VGR_LOCATION: ${{ inputs.location }}
         VGR_GITHUB_TOKEN: ${{ inputs.github-token }}
         VGR_POOL: ${{ inputs.pool }}
+        VGR_RUN_ID: ${{ inputs.run-id }}
+        VGR_MAX_AGE_MINUTES: ${{ inputs.max-age-minutes }}
         VGR_WINDOW_START_MINUTE: ${{ inputs.window-start-minute }}
       run: bun "$ACTION_PATH/../src/cli.ts" reap
