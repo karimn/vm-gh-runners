@@ -131,8 +131,11 @@ rather than creating a second.
   runner that makes reap keep the server. Pool runners are `self-hosted` like any
   other, so its `runs-on` needs a label only non-pool runners have, or a
   GitHub-hosted runner (what the OVH examples use).
-- The reaper must run at least every 5 minutes. It is cheap on a self-hosted
-  runner and costly on a GitHub-hosted one (about 8,600 billed minutes a month).
+- On Hetzner the reaper must run at least every 5 minutes, or a VM is billed a
+  second hour. It is cheap on a self-hosted runner and costly on a GitHub-hosted
+  one (about 8,600 billed minutes a month). On OVH it is only a safety net behind
+  the workflow's teardown job, so every 30 minutes on a GitHub-hosted runner is
+  enough (about 1,500 billed minutes a month).
 - Runners above the configured count are ignored, and stopping or off servers
   are not reaped. An off OVH server still bills; delete it by hand.
 - OVH: a creator whose request was stamped earlier but committed later than a
