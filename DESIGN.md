@@ -449,18 +449,22 @@ restated here.
 
 ## Open
 
-- Run `build-image` once for real, then one `ensure` on `latest-built`, and check,
-  because the adapter was written from the OpenStack API reference and the fake in
-  `test/ovh.test.ts`: that `listImages`, which filters on `visibility=private`,
-  finds the snapshot (the strict name pattern already scopes the list, so dropping
-  that filter is cheap if OVH marks snapshots differently); whether Nova's
-  `createImage` answers with a `Location` header or `image_id` (both are handled);
-  how long a snapshot takes to become active, against the 20 minute wait; that a
-  clone boots cleanly (networking after the old netplan file is removed, root SSH,
-  regenerated host keys, a new machine-id, cloud-init applying the new key and
-  user-data); that the `min_disk` of the snapshot matches the flavor; and the boot
-  time against the stock image.
-
+- Confirmed on 2026-10-05 against the real OVH US project, from throwaway runs in
+  Sia.jl (a `build-image` run, then an `ensure` on `latest-built` with one runner):
+  the build took 4 min 27 s and rebooted (the stock image had pending updates);
+  `listImages` with `visibility=private` finds the snapshot, and it was active
+  within a minute; the server created from it reached cloud-init `done` with no
+  errors, Docker active, the baked marker, the `runner` user and
+  `/opt/actions-runner`, with root SSH working for the registrar and its own SSH
+  host key; the builder's key was not left behind; `ensure` took 1 min 44 s from
+  create to registered, on a b3-8 with one runner.
+- Still unchecked: that the new server's machine-id and host key differ from the
+  builder's (both were printed, not compared); whether Nova answered `createImage`
+  with a `Location` header or `image_id` (both handled); a boot on a larger flavor
+  than the builder's (b3-32 from a b3-8 snapshot) and on a smaller one, which should
+  be refused; a build with `prepull-images`, including a private registry; and boot
+  time against the stock image, since the earlier stock timings (116 to 136 s) were
+  b3-32 with six runners and are not comparable.
 - Run the OVH adapter against a real project and check, in this order: that the
   root login works with `disable_root: false`; that the response shapes match
   the fake in `test/ovh.test.ts` (written from the OpenStack API reference, not
