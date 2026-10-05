@@ -85,6 +85,8 @@ const toServer = (s: ApiServer): Server => ({
 
 /** Hetzner Cloud adapter. */
 export class HetznerProvider implements Provider {
+  /** "We always round up the hourly usage of a server" (Hetzner FAQ). */
+  readonly billing = "per-started-hour" as const;
   private readonly token: string;
   private readonly sshKeys: readonly (string | number)[];
   private readonly fetchImpl: typeof fetch;

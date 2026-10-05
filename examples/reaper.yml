@@ -1,5 +1,6 @@
 # Copy into the consuming repo's .github/workflows/ next to the workflow that
-# calls the ensure action. Uses the same three secrets.
+# calls the ensure action. Uses the same three secrets. This is the Hetzner
+# version; for OVH, which bills by runtime, see examples/reaper-ovh.yml.
 #
 # Deletes the pool's idle VMs in the last minutes of their paid hour. The window
 # is the last 10 minutes by default, so this must run at least every 5 minutes:

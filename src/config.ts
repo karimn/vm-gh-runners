@@ -7,11 +7,31 @@
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
+/** Which cloud, and how to authenticate to it. */
+export type ProviderConfig =
+  | { readonly kind: "hetzner"; readonly token: string }
+  | {
+      readonly kind: "ovh";
+      /** Keystone v3 URL. The OVH US account's is `https://auth.cloud.ovh.us/v3`; EU's differs. */
+      readonly authUrl: string;
+      readonly credentialId: string;
+      readonly credentialSecret: string;
+      /** The region, from `VGR_LOCATION`. Selects which service endpoints are used. */
+      readonly region: string;
+    };
+
+export const DEFAULTS = {
+  hetzner: { image: "ubuntu-24.04", location: "nbg1" },
+  // OVH's stock Ubuntu image, not "Debian 12 - Docker": that one ships docker-ce,
+  // which the first-boot script's `apt install docker.io` would fight with.
+  ovh: { image: "Ubuntu 24.04", location: "US-EAST-VA-1" },
+} as const;
+
 export interface CommonConfig {
   /** `owner/name`. */
   readonly repo: string;
   readonly pool: string;
-  readonly hcloudToken: string;
+  readonly provider: ProviderConfig;
   /** A token allowed to manage this repo's runners (Administration: read and write). */
   readonly githubToken: string;
 }
@@ -24,7 +44,10 @@ export interface EnsureCliConfig extends CommonConfig {
   readonly labels: readonly string[];
   readonly runnerVersion: string;
   readonly extraPackages: readonly string[];
-  /** Names or IDs of SSH keys already uploaded to the Hetzner project. */
+  /**
+   * Names or IDs of SSH keys already uploaded to the cloud project. OVH takes
+   * exactly one, and it must exist in the configured region.
+   */
   readonly sshKeyNames: readonly string[];
   /** Private half of the key above. Written to a 0600 temp file, never logged. */
   readonly sshPrivateKey: string;
@@ -63,13 +86,31 @@ const integer = (env: Env, name: string, min: number, max = Infinity): number | 
   return Number(raw);
 };
 
+const providerConfig = (env: Env): ProviderConfig => {
+  const kind = env["VGR_PROVIDER"]?.trim() || "hetzner";
+  if (kind === "hetzner") return { kind, token: required(env, "HCLOUD_TOKEN") };
+  if (kind === "ovh") {
+    const authUrl = env["OS_AUTH_URL"]?.trim() || "https://auth.cloud.ovh.us/v3";
+    // The application credential is sent to this URL, so never to plain http.
+    if (!/^https:\/\/[^\s]+$/i.test(authUrl)) throw new Error("OS_AUTH_URL must be an https:// URL");
+    return {
+      kind,
+      authUrl,
+      credentialId: required(env, "OS_APPLICATION_CREDENTIAL_ID"),
+      credentialSecret: required(env, "OS_APPLICATION_CREDENTIAL_SECRET"),
+      region: env["VGR_LOCATION"]?.trim() || env["OS_REGION_NAME"]?.trim() || DEFAULTS.ovh.location,
+    };
+  }
+  throw new Error(`VGR_PROVIDER must be hetzner or ovh, got "${kind}"`);
+};
+
 const common = (env: Env): CommonConfig => {
   const repo = env["VGR_REPO"]?.trim() || required(env, "GITHUB_REPOSITORY");
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) throw new Error("the repo must be in owner/name form");
   return {
     repo,
     pool: required(env, "VGR_POOL"),
-    hcloudToken: required(env, "HCLOUD_TOKEN"),
+    provider: providerConfig(env),
     githubToken: required(env, "VGR_GITHUB_TOKEN"),
   };
 };
@@ -77,25 +118,36 @@ const common = (env: Env): CommonConfig => {
 export const loadEnsureConfig = (env: Env): EnsureCliConfig => {
   const base = common(env);
   const labels = list(env["VGR_RUNNER_LABELS"]);
+  const sshKeyNames = list(required(env, "VGR_SSH_KEY_NAMES"));
+  if (base.provider.kind === "ovh" && sshKeyNames.length !== 1) {
+    throw new Error("VGR_SSH_KEY_NAMES must name exactly one key pair for ovh (Nova takes one per server)");
+  }
+  const defaults = DEFAULTS[base.provider.kind];
   return {
     ...base,
     serverType: required(env, "VGR_SERVER_TYPE"),
-    image: env["VGR_IMAGE"]?.trim() || "ubuntu-24.04",
-    location: env["VGR_LOCATION"]?.trim() || "nbg1",
+    image: env["VGR_IMAGE"]?.trim() || defaults.image,
+    location: base.provider.kind === "ovh" ? base.provider.region : env["VGR_LOCATION"]?.trim() || defaults.location,
     runnerCount: integer(env, "VGR_RUNNER_COUNT", 1) ?? 3,
     labels: labels.length > 0 ? labels : ["vm-gh-runners", `pool-${base.pool}`],
     runnerVersion: env["VGR_RUNNER_VERSION"]?.trim() || "latest",
     extraPackages: list(env["VGR_EXTRA_PACKAGES"]),
-    sshKeyNames: list(required(env, "VGR_SSH_KEY_NAMES")),
+    sshKeyNames,
     sshPrivateKey: required(env, "VGR_SSH_PRIVATE_KEY"),
   };
 };
 
 export const loadReapConfig = (env: Env): ReapCliConfig => {
+  const base = common(env);
   const windowStartMinute = integer(env, "VGR_WINDOW_START_MINUTE", 0, 59);
+  if (base.provider.kind === "ovh" && windowStartMinute !== undefined) {
+    // OVH bills by runtime, so there is no paid hour to wait out. Refuse rather
+    // than let someone believe they are holding idle VMs warm.
+    throw new Error("VGR_WINDOW_START_MINUTE has no effect on ovh (billed by runtime, idle servers are deleted at once); remove it");
+  }
   const currentRunId = integer(env, "GITHUB_RUN_ID", 0);
   return {
-    ...common(env),
+    ...base,
     ...(windowStartMinute === undefined ? {} : { windowStartMinute }),
     ...(currentRunId === undefined ? {} : { currentRunId }),
   };

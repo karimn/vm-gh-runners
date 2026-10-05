@@ -79,8 +79,12 @@ export const buildUserData = (options: UserDataOptions = {}): string => {
     .map((line) => (line === "" ? "" : `      ${line}`))
     .join("\n");
 
+  // disable_root: false makes the injected key log in as root. The registrar
+  // connects as root, which Hetzner allows by default; OVH's stock images
+  // instead restrict root's key to a "log in as ubuntu" stub unless told not to.
   return `#cloud-config
 ssh_pwauth: false
+disable_root: false
 write_files:
   - path: /opt/vm-gh-runners/setup.sh
     permissions: '0755'

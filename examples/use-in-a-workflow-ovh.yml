@@ -1,0 +1,60 @@
+# The OVH Public Cloud version of examples/use-in-a-workflow.yml. Copy into the
+# consuming repo's .github/workflows/ and adapt.
+#
+# Run tests on a pooled OVH VM. The first job reuses the pool's VM or creates one
+# and makes sure its runners are up; the second runs on those runners. Nothing
+# here deletes the VM: the scheduled reaper (examples/reaper-ovh.yml) does, as
+# soon as the VM is idle. OVH bills a server for the time it exists, so unlike
+# Hetzner there is no paid hour to wait out.
+#
+# Secrets to add to the repo (Settings > Secrets and variables > Actions):
+#   OVH_APPLICATION_CREDENTIAL_ID      Application credential, created as UNRESTRICTED
+#   OVH_APPLICATION_CREDENTIAL_SECRET  (a restricted one cannot create servers).
+#                                      Shown once, in Public Cloud > Users & Roles.
+#   VGR_GITHUB_TOKEN                   Fine-grained PAT for this repo with Administration: read and write.
+#   VGR_SSH_PRIVATE_KEY                Private key whose public half is uploaded to the OVH
+#                                      project as a key pair named like ssh-key-names below,
+#                                      IN THE SAME REGION as `location`. A fresh key used for
+#                                      nothing else, with no passphrase.
+
+name: tests on a pooled OVH VM
+
+on:
+  pull_request:
+
+jobs:
+  vm:
+    # This job only makes API calls and SSHes in briefly, so any runner will do.
+    runs-on: self-hosted
+    timeout-minutes: 30
+    outputs:
+      runs_on: ${{ steps.ensure.outputs.runs_on }}
+    steps:
+      - id: ensure
+        uses: karimn/vm-gh-runners/ensure@main
+        with:
+          pool: ci
+          provider: ovh
+          # The OVH US account's Keystone (https://auth.cloud.ovh.us/v3) and
+          # region (US-EAST-VA-1) are the defaults. An EU account sets
+          # ovh-auth-url (https://auth.cloud.ovh.net/v3) and a location such as GRA11.
+          location: US-EAST-VA-1
+          # An OVH flavor. b3-32 is 8 vCPU / 32 GB. A pool of 8 runners that
+          # averages 39% of 16 vCPUs needs about 6 cores, so that is tight; look
+          # in the manager at what 16 vCPU / 32 GB flavor your region offers.
+          server-type: b3-32
+          # Exactly one key pair name (Nova takes one per server).
+          ssh-key-names: ci-key
+          ssh-private-key: ${{ secrets.VGR_SSH_PRIVATE_KEY }}
+          ovh-application-credential-id: ${{ secrets.OVH_APPLICATION_CREDENTIAL_ID }}
+          ovh-application-credential-secret: ${{ secrets.OVH_APPLICATION_CREDENTIAL_SECRET }}
+          github-token: ${{ secrets.VGR_GITHUB_TOKEN }}
+          runner-count: 6
+          # Pin for repeatable VMs.
+          runner-version: 2.337.0
+
+  test:
+    needs: vm
+    runs-on: ${{ fromJSON(needs.vm.outputs.runs_on) }}
+    steps:
+      - uses: actions/checkout@v4

@@ -143,3 +143,37 @@ describe("concurrent callers", () => {
     expect(String(err.message)).toContain("already exists");
   });
 });
+
+describe("ensureServer with a server that has no address yet", () => {
+  const unaddressed = async (provider: MockProvider) => {
+    const s = await provider.createServer({ ...config, name: serverName(config), labels: serverLabels(config.pool, config.repo) });
+    const { address: _, ...bare } = s;
+    provider.servers.set(s.id, bare);
+    return { bare, withAddress: s };
+  };
+
+  test("waits for a server another run is still building instead of creating a second", async () => {
+    const provider = new MockProvider(() => t0);
+    const { bare, withAddress } = await unaddressed(provider);
+    let sleeps = 0;
+    const r = await ensureServer(provider, config, {
+      conflictDelayMs: 0,
+      sleep: async () => {
+        // The provider assigns the address while we wait.
+        if (++sleeps === 2) provider.servers.set(bare.id, withAddress);
+      },
+    });
+
+    expect(r).toMatchObject({ created: false, server: { id: bare.id, address: withAddress.address } });
+    expect(provider.calls.filter((c) => c.startsWith("create:"))).toHaveLength(1);
+  });
+
+  test("gives up with a clear error if the address never arrives", async () => {
+    const provider = new MockProvider(() => t0);
+    const { bare } = await unaddressed(provider);
+    await expect(ensureServer(provider, config, { ...noWait, conflictAttempts: 3 })).rejects.toThrow(
+      `server ${bare.name} (${bare.id}) still has no address after 3 checks`,
+    );
+    expect(provider.calls.filter((c) => c.startsWith("create:"))).toHaveLength(1);
+  });
+});

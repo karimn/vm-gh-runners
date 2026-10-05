@@ -1,0 +1,36 @@
+# The OVH Public Cloud version of examples/reaper.yml. Copy into the consuming
+# repo's .github/workflows/ next to the workflow that calls the ensure action.
+#
+# OVH bills a server for the time it exists, so an idle VM is deleted at the next
+# run of this workflow, not held until the end of a paid hour. There is no
+# window-start-minute: setting it with provider ovh is an error. A stopped server
+# still bills, which is why this deletes rather than stops.
+#
+# Where it runs matters for cost. On a GitHub-hosted runner every run bills at
+# least one minute, and every 5 minutes is about 8,600 runs a month, which is
+# far past the free allowance of a private repo. A self-hosted runner is free.
+# The trade-off is that if it is offline, VMs are not reaped and keep billing by
+# the minute until it is back.
+#
+# `location` must match the one given to ensure: servers are listed per region.
+
+name: reap idle OVH VMs
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  reap:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: karimn/vm-gh-runners/reap@main
+        with:
+          pool: ci
+          provider: ovh
+          location: US-EAST-VA-1
+          ovh-application-credential-id: ${{ secrets.OVH_APPLICATION_CREDENTIAL_ID }}
+          ovh-application-credential-secret: ${{ secrets.OVH_APPLICATION_CREDENTIAL_SECRET }}
+          github-token: ${{ secrets.VGR_GITHUB_TOKEN }}

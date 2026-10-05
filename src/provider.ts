@@ -11,7 +11,12 @@ export interface Server {
   readonly labels: Labels;
   /** Creation time. Billing hours are counted from here, not from first use. */
   readonly createdAt: Date;
-  readonly status: "starting" | "running" | "stopping" | "off";
+  /**
+   * `error` is a server the provider could not build or that failed afterwards
+   * (OpenStack's ERROR). It is never reused and the reaper deletes it, since
+   * most clouds keep billing it.
+   */
+  readonly status: "starting" | "running" | "stopping" | "off" | "error";
   /** Public IPv4, if the server has one. Needed to reach it over SSH. */
   readonly address?: string;
 }
@@ -19,9 +24,10 @@ export interface Server {
 export interface CreateServerSpec {
   readonly name: string;
   readonly labels: Labels;
-  /** Provider-specific size name, e.g. a Hetzner server type. */
+  /** Provider-specific size name, e.g. a Hetzner server type or an OVH flavor. */
   readonly serverType: string;
   readonly image: string;
+  /** A Hetzner location such as `nbg1`, or an OVH region such as `US-EAST-VA-1`. */
   readonly location: string;
   /**
    * First-boot script. Anything in here is readable from inside the VM without
@@ -30,7 +36,29 @@ export interface CreateServerSpec {
   readonly userData: string;
 }
 
+/**
+ * How a cloud charges for a server, which decides when an idle one is worth
+ * deleting.
+ *
+ * - `per-started-hour`: every started hour is billed in full (Hetzner). An idle
+ *   server is kept until the last minutes of the hour already paid for, because
+ *   deleting it earlier saves nothing and forfeits a warm VM.
+ * - `prorated`: billed for the time it actually exists (OVH). Every idle minute
+ *   is wasted, so an idle server is deleted at the next reap.
+ *
+ * Either way a stopped server still bills, so the reaper deletes, never stops.
+ */
+export type BillingModel = "per-started-hour" | "prorated";
+
 export interface Provider {
+  readonly billing: BillingModel;
+  /**
+   * Create and return a server, with `address` set once the provider has one.
+   * Rejects with `ServerExistsError` if another live server already holds
+   * `spec.name`: that is how concurrent `ensure` calls converge on one server.
+   * Providers that enforce unique names get this for free; the others must
+   * arbitrate after creating (see `OvhProvider`).
+   */
   createServer(spec: CreateServerSpec): Promise<Server>;
   /** Servers whose labels contain every key/value in `selector`. */
   listServers(selector: Labels): Promise<readonly Server[]>;
@@ -39,7 +67,11 @@ export interface Provider {
    * Rename a server and replace its labels in one request, so there is no
    * moment where it has the new name but the old labels or the reverse. `labels`
    * is the complete new set, not a patch. Rejects with `ServerExistsError` if
-   * another server holds `name`.
+   * another server holds `name` (only on providers that enforce unique names).
+   *
+   * Not every provider can do both in one request. Where it takes two, the name
+   * changes first and the labels second, so a failure in between leaves a server
+   * that still carries the pool's labels and a retry finishes the job.
    */
   updateServer(id: string, patch: ServerPatch): Promise<Server>;
 }
@@ -64,9 +96,10 @@ export const serverLabels = (pool: string, repo: string): Labels => ({
 });
 
 /**
- * Thrown by `createServer` when a server with that name already exists. Names
- * are unique per provider project, which makes a deterministic name a lock:
- * of several concurrent creators exactly one succeeds and the rest get this.
+ * Thrown by `createServer` when a server with that name already exists. A
+ * deterministic name works as a lock: of several concurrent creators exactly one
+ * succeeds and the rest get this. Where the provider does not enforce unique
+ * names the adapter has to produce the same outcome itself.
  */
 export class ServerExistsError extends Error {
   constructor(readonly serverName: string) {

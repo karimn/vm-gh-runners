@@ -164,3 +164,64 @@ describe("withKeyFile", () => {
     dispose();
   });
 });
+
+describe("main with the ovh provider", () => {
+  const { HCLOUD_TOKEN: _, ...withoutHetzner } = env;
+  const ovhEnv = {
+    ...withoutHetzner,
+    VGR_PROVIDER: "ovh",
+    OS_APPLICATION_CREDENTIAL_ID: "cred-id",
+    OS_APPLICATION_CREDENTIAL_SECRET: "cred-secret",
+    VGR_SERVER_TYPE: "b3-32",
+    VGR_SSH_KEY_NAMES: "sia-ci-key",
+    VGR_LOCATION: "US-EAST-VA-1",
+  };
+
+  test("hands the factory an OVH config for each command, with no Hetzner token needed", async () => {
+    const t = setup();
+    const seen: unknown[] = [];
+    const factory: Factory = {
+      ensure: async (cfg) => (seen.push(cfg.provider), t.factory.ensure(cfg)),
+      reap: async (cfg) => (seen.push(cfg.provider), t.factory.reap(cfg)),
+      release: async (cfg) => (seen.push(cfg.provider), t.factory.release(cfg)),
+    };
+    await main(["ensure"], ovhEnv, factory, t.log);
+    await main(["reap"], ovhEnv, factory, t.log);
+    await main(["release"], ovhEnv, factory, t.log);
+
+    expect(seen).toHaveLength(3);
+    for (const p of seen) {
+      expect(p).toEqual({
+        kind: "ovh",
+        authUrl: "https://auth.cloud.ovh.us/v3",
+        credentialId: "cred-id",
+        credentialSecret: "cred-secret",
+        region: "US-EAST-VA-1",
+      });
+    }
+  });
+
+  test("reap on ovh deletes an idle server at once, however young", async () => {
+    const t = setup();
+    const provider = new MockProvider(() => new Date(), "prorated");
+    await provider.createServer({
+      name: "ci-karimn-sia-x", labels: { pool: "ci", repo: "karimn_sia" },
+      serverType: "t", image: "i", location: "l", userData: "",
+    });
+    const factory: Factory = { ...t.factory, reap: async () => ({ provider, github: t.github, dispose: () => {} }) };
+
+    const code = await main(["reap"], { ...ovhEnv, GITHUB_OUTPUT: t.out }, factory, t.log);
+    expect(code).toBe(0);
+    expect(provider.servers.size).toBe(0);
+    expect(readFileSync(t.out, "utf8")).toContain("deleted=1");
+  });
+
+  test("fails with a config error that names the variable, and exits 1", async () => {
+    const t = setup();
+    const code = await main(["reap"], { ...ovhEnv, OS_APPLICATION_CREDENTIAL_SECRET: "" }, t.factory, t.log);
+    expect(code).toBe(1);
+    const text = t.lines.join("\n");
+    expect(text).toContain("OS_APPLICATION_CREDENTIAL_SECRET");
+    expect(text).not.toContain("cred-id");
+  });
+});

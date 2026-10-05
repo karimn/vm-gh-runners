@@ -14,7 +14,7 @@ const at = (m: number) => new Date(t0.getTime() + m * 60_000);
 const ensureCfg: EnsureCliConfig = {
   repo: "karimn/sia",
   pool: "ci",
-  hcloudToken: "x",
+  provider: { kind: "hetzner", token: "x" },
   githubToken: "x",
   serverType: "cpx62",
   image: "ubuntu-24.04",
@@ -81,7 +81,7 @@ describe("runEnsure", () => {
   test("never puts a token or key in the user-data", async () => {
     await runEnsure(
       { provider, github, registrar },
-      { ...ensureCfg, githubToken: "GH-SECRET", hcloudToken: "HZ-SECRET", sshPrivateKey: "KEY-SECRET" },
+      { ...ensureCfg, githubToken: "GH-SECRET", provider: { kind: "hetzner", token: "HZ-SECRET" }, sshPrivateKey: "KEY-SECRET" },
     );
     for (const secret of ["GH-SECRET", "HZ-SECRET", "KEY-SECRET"]) {
       expect(specs[0]?.userData).not.toContain(secret);
@@ -90,7 +90,7 @@ describe("runEnsure", () => {
 });
 
 describe("runReap", () => {
-  const cfg = { repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x", currentRunId: 9 };
+  const cfg = { repo: "karimn/sia", pool: "ci", provider: { kind: "hetzner" as const, token: "x" }, githubToken: "x", currentRunId: 9 };
 
   const addIdleServer = async () => {
     const s = await provider.createServer({
@@ -162,7 +162,7 @@ describe("toGithubOutput", () => {
 
 describe("runRelease", () => {
   const cfg = {
-    repo: "karimn/sia", pool: "ci", hcloudToken: "x", githubToken: "x", sshPrivateKey: "k",
+    repo: "karimn/sia", pool: "ci", provider: { kind: "hetzner" as const, token: "x" }, githubToken: "x", sshPrivateKey: "k",
     newPoolLabel: "released", force: false, currentRunId: 9,
   };
 

@@ -20,8 +20,8 @@ import {
   type ReleaseCliConfig,
 } from "./config.ts";
 import { GithubClient } from "./github-client.ts";
-import { HetznerProvider } from "./hetzner.ts";
 import { withKeyFile } from "./keyfile.ts";
+import { createProvider } from "./providers.ts";
 import { SshRegistrar } from "./ssh-registrar.ts";
 import { SystemSsh } from "./ssh.ts";
 
@@ -48,7 +48,7 @@ export const realFactory: Factory = {
     const key = withKeyFile(cfg.sshPrivateKey);
     const github = new GithubClient({ repo: cfg.repo, token: cfg.githubToken });
     return {
-      provider: new HetznerProvider({ token: cfg.hcloudToken, sshKeys: cfg.sshKeyNames }),
+      provider: createProvider(cfg.provider, { sshKeys: cfg.sshKeyNames }),
       github,
       registrar: new SshRegistrar({
         github,
@@ -61,7 +61,7 @@ export const realFactory: Factory = {
   },
   async reap(cfg) {
     return {
-      provider: new HetznerProvider({ token: cfg.hcloudToken }),
+      provider: createProvider(cfg.provider),
       github: new GithubClient({ repo: cfg.repo, token: cfg.githubToken }),
       dispose: () => {},
     };
@@ -70,7 +70,7 @@ export const realFactory: Factory = {
     const key = withKeyFile(cfg.sshPrivateKey);
     const github = new GithubClient({ repo: cfg.repo, token: cfg.githubToken });
     return {
-      provider: new HetznerProvider({ token: cfg.hcloudToken }),
+      provider: createProvider(cfg.provider),
       github,
       // Only `uninstall` is used, which needs neither the token source nor labels.
       registrar: new SshRegistrar({ github, repo: cfg.repo, ssh: new SystemSsh({ keyPath: key.path }) }),

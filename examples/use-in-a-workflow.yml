@@ -1,4 +1,5 @@
-# Copy into the consuming repo's .github/workflows/ and adapt.
+# Copy into the consuming repo's .github/workflows/ and adapt. This is the
+# Hetzner version; for OVH see examples/use-in-a-workflow-ovh.yml.
 #
 # Run tests on a pooled VM. The first job reuses the pool's VM or creates one
 # and makes sure its runners are up; the second runs on those runners. Nothing

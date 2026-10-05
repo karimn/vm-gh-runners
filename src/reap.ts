@@ -7,6 +7,7 @@ export interface ReapConfig {
   readonly repo: string;
   /** The reaper's own workflow run, excluded from the "repo is busy" check. */
   readonly currentRunId?: number;
+  /** Only used when the provider bills per started hour; see `shouldReap`. */
   readonly windowStartMinute?: number;
 }
 
@@ -26,10 +27,14 @@ export interface ReapResult {
   readonly error?: string;
 }
 
-const LIVE: ReadonlySet<Server["status"]> = new Set(["starting", "running"]);
+// `error` servers are included so a failed build does not bill forever; the
+// same idle checks apply to them as to any other server.
+const REAPABLE: ReadonlySet<Server["status"]> = new Set(["starting", "running", "error"]);
 
 /**
- * Delete this pool's idle servers that are inside the last minutes of a paid hour.
+ * Delete this pool's idle servers. When the provider bills per started hour that
+ * means only inside the last minutes of a paid hour; when it bills by actual
+ * runtime, as soon as they are idle.
  *
  * "Idle" is deliberately conservative: no runner on the server is busy AND the
  * repo has no other queued or in-progress run. A run between two jobs has no
@@ -50,7 +55,7 @@ export const reap = async (
   now: Date = new Date(),
 ): Promise<readonly ReapResult[]> => {
   const servers = (await provider.listServers(serverLabels(cfg.pool, cfg.repo))).filter(
-    (s) => LIVE.has(s.status),
+    (s) => REAPABLE.has(s.status),
   );
   if (servers.length === 0) return [];
 
@@ -65,7 +70,15 @@ export const reap = async (
     const base = { serverId: server.id, name: server.name };
     const mine = runnersOfServer(runners, server.name);
 
-    if (!shouldReap({ now, createdAt: server.createdAt, busy: false, windowStartMinute: cfg.windowStartMinute })) {
+    if (
+      !shouldReap({
+        now,
+        createdAt: server.createdAt,
+        busy: false,
+        billing: provider.billing,
+        windowStartMinute: cfg.windowStartMinute,
+      })
+    ) {
       results.push({ ...base, action: "kept", reason: "outside-window" });
       continue;
     }
