@@ -62,14 +62,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-  # Runs even if the tests failed or were cancelled. It must NOT run on a pool
-  # runner: the pool's runners are `self-hosted` too, and the job would then be
-  # the busy runner that makes reap keep the server. Give your own (non-pool)
-  # runners a custom label and list it here, e.g. [self-hosted, my-laptop].
+  # Runs even if the tests failed or were cancelled. It runs on a GitHub-hosted
+  # runner on purpose: the pool's runners are `self-hosted` too, so a self-hosted
+  # teardown could land on one of them, making it the busy runner that makes reap
+  # keep the server. It is one short job per run, about a minute billed.
   teardown:
     needs: [vm, test]
     if: ${{ always() && needs.vm.result == 'success' }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: karimn/vm-gh-runners/reap@main
