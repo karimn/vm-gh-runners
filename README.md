@@ -40,7 +40,7 @@ stale, and every run also pays a cold start installing Docker and the runner. Th
 `build-image` action fixes both: it boots a temporary VM from the stock image,
 applies a full `apt-get dist-upgrade` (rebooting if required), installs Docker and
 the runner, optionally pre-pulls your CI container images, cleans the machine
-identity, snapshots it as `vgr-<pool>-<yyyymmdd>`, deletes the temporary VM, and
+identity, snapshots it as `vgr-<pool>-<owner>_<repo>-<yyyymmdd>`, deletes the temporary VM, and
 keeps only the newest 2 images. `ensure` with `image: latest-built` then boots the
 newest one, skips what is already in it, and still registers the run's runners.
 With no built image yet it falls back to the stock image and the full setup, and
@@ -68,8 +68,8 @@ size). What it saves per run is estimated in DESIGN.md "Built images".
 
 Limits to know:
 
-- One repo per pool. Images are named by pool only, so two repos sharing a pool
-  would boot and prune each other's images.
+- An image belongs to a pool and a repo, like a server, so repos sharing a pool keep
+  and prune their own. Run `build-image` from each repo that uses `latest-built`.
 - The builder's `server-type` must have a root disk no larger than `ensure`'s.
 - A pre-pulled image is read at build time: pass the tag in use now, not a literal
   that goes stale.

@@ -16,6 +16,7 @@ const options = { now: () => now, sleep: async () => {}, connectAttempts: 3 };
 
 const cfg: BuildImageConfig = {
   pool: "ci",
+  repo: "karimn/sia",
   serverType: "b3-8",
   baseImage: "Ubuntu 24.04",
   location: "US-EAST-VA-1",
@@ -51,8 +52,8 @@ describe("buildImage", () => {
 
     const r = await buildImage({ provider, ssh }, cfg, options);
 
-    expect(r.imageName).toBe("vgr-ci-20261005");
-    expect(provider.images.get(r.imageId)?.name).toBe("vgr-ci-20261005");
+    expect(r.imageName).toBe("vgr-ci-karimn_sia-20261005");
+    expect(provider.images.get(r.imageId)?.name).toBe("vgr-ci-karimn_sia-20261005");
     expect(r.rebooted).toBe(false);
     expect(provider.servers.size).toBe(0);
     expect(provider.calls.filter((c) => c.startsWith("create:"))).toHaveLength(1);
@@ -130,29 +131,42 @@ describe("buildImage", () => {
 
   test("a snapshot adds an image first, and only then are older ones pruned to N", async () => {
     const provider = new MockProvider(() => now);
-    seedImage(provider, "vgr-ci-20260101", "2026-01-01T00:00:00Z");
-    seedImage(provider, "vgr-ci-20260901", "2026-09-01T00:00:00Z");
-    seedImage(provider, "vgr-ci-20260928", "2026-09-28T00:00:00Z");
+    seedImage(provider, "vgr-ci-karimn_sia-20260101", "2026-01-01T00:00:00Z");
+    seedImage(provider, "vgr-ci-karimn_sia-20260901", "2026-09-01T00:00:00Z");
+    seedImage(provider, "vgr-ci-karimn_sia-20260928", "2026-09-28T00:00:00Z");
 
     const r = await buildImage({ provider, ssh: sshFor() }, cfg, options);
 
-    expect([...r.pruned.deleted].sort()).toEqual(["vgr-ci-20260101", "vgr-ci-20260901"]);
-    expect([...provider.images.values()].map((i) => i.name).sort()).toEqual(["vgr-ci-20260928", "vgr-ci-20261005"]);
+    expect([...r.pruned.deleted].sort()).toEqual(["vgr-ci-karimn_sia-20260101", "vgr-ci-karimn_sia-20260901"]);
+    expect([...provider.images.values()].map((i) => i.name).sort()).toEqual(["vgr-ci-karimn_sia-20260928", "vgr-ci-karimn_sia-20261005"]);
     const calls = provider.calls;
-    expect(calls.indexOf("createImage:vgr-ci-20261005")).toBeLessThan(calls.findIndex((c) => c.startsWith("deleteImage:")));
+    expect(calls.indexOf("createImage:vgr-ci-karimn_sia-20261005")).toBeLessThan(calls.findIndex((c) => c.startsWith("deleteImage:")));
+  });
+
+  test("two repos sharing a pool neither boot nor prune each other's images", async () => {
+    const provider = new MockProvider(() => now);
+    seedImage(provider, "vgr-ci-karimn_other-20260101", "2026-01-01T00:00:00Z");
+    seedImage(provider, "vgr-ci-karimn_other-20260102", "2026-01-02T00:00:00Z");
+    seedImage(provider, "vgr-ci-karimn_other-20260103", "2026-01-03T00:00:00Z");
+
+    const r = await buildImage({ provider, ssh: sshFor() }, cfg, options);
+
+    expect(r.imageName).toBe("vgr-ci-karimn_sia-20261005");
+    expect(r.pruned.deleted).toEqual([]);
+    expect(provider.images.size).toBe(4);
   });
 
   test("keeps N images when told to", async () => {
     const provider = new MockProvider(() => now);
-    for (const d of ["01", "02", "03"]) seedImage(provider, `vgr-ci-202609${d}`, `2026-09-${d}T00:00:00Z`);
+    for (const d of ["01", "02", "03"]) seedImage(provider, `vgr-ci-karimn_sia-202609${d}`, `2026-09-${d}T00:00:00Z`);
     await buildImage({ provider, ssh: sshFor() }, { ...cfg, keep: 4 }, options);
     expect(provider.images.size).toBe(4);
   });
 
   test("reports an image it could not prune without failing the build", async () => {
     const provider = new MockProvider(() => now);
-    seedImage(provider, "vgr-ci-20260101", "2026-01-01T00:00:00Z");
-    seedImage(provider, "vgr-ci-20260901", "2026-09-01T00:00:00Z");
+    seedImage(provider, "vgr-ci-karimn_sia-20260101", "2026-01-01T00:00:00Z");
+    seedImage(provider, "vgr-ci-karimn_sia-20260901", "2026-09-01T00:00:00Z");
     provider.failDeleteImageWith = new Error("glance said no");
     const r = await buildImage({ provider, ssh: sshFor() }, { ...cfg, keep: 1 }, options);
     expect(r.pruned.failed).toHaveLength(2);
@@ -169,21 +183,21 @@ describe("buildImage", () => {
     ];
     test.each(failures)("when %s", async (_name, fail, message) => {
       const provider = new MockProvider(() => now);
-      seedImage(provider, "vgr-ci-20260901", "2026-09-01T00:00:00Z");
-      seedImage(provider, "vgr-ci-20260928", "2026-09-28T00:00:00Z");
+      seedImage(provider, "vgr-ci-karimn_sia-20260901", "2026-09-01T00:00:00Z");
+      seedImage(provider, "vgr-ci-karimn_sia-20260928", "2026-09-28T00:00:00Z");
 
       await expect(
         buildImage({ provider, ssh: sshFor({ fail }) }, { ...cfg, prepullImages: ["ghcr.io/o/ci:1"] }, options),
       ).rejects.toThrow(message);
 
       expect(provider.servers.size).toBe(0);
-      expect([...provider.images.values()].map((i) => i.name).sort()).toEqual(["vgr-ci-20260901", "vgr-ci-20260928"]);
+      expect([...provider.images.values()].map((i) => i.name).sort()).toEqual(["vgr-ci-karimn_sia-20260901", "vgr-ci-karimn_sia-20260928"]);
       expect(provider.calls.some((c) => c.startsWith("deleteImage:"))).toBe(false);
     });
 
     test("when the snapshot fails", async () => {
       const provider = new MockProvider(() => now);
-      seedImage(provider, "vgr-ci-20260901", "2026-09-01T00:00:00Z");
+      seedImage(provider, "vgr-ci-karimn_sia-20260901", "2026-09-01T00:00:00Z");
       provider.failImageWith = new Error("snapshot refused");
 
       await expect(buildImage({ provider, ssh: sshFor() }, cfg, options)).rejects.toThrow("snapshot refused");

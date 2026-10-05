@@ -3,18 +3,18 @@ description: >-
   Build the image that ensure boots when given image latest-built. Boots a
   temporary OVH server from the stock image, applies every security update,
   installs Docker and the runner, optionally pulls container images, cleans it so
-  clones boot as new machines, snapshots it as vgr-<pool>-<yyyymmdd>, deletes the
+  clones boot as new machines, snapshots it as vgr-<pool>-<owner>_<repo>-<yyyymmdd>, deletes the
   temporary server and the older images beyond the newest few. Run it on a weekly
   schedule from the consuming repo (see examples/build-image-ovh.yml). It takes
   about 15 minutes and OVH bills the temporary server for that time plus the
-  snapshot's storage. Use one repo per pool: images are named by pool only. OVH
-  only: Hetzner cannot build images yet.
+  snapshot's storage. OVH only: Hetzner cannot build images yet.
 
 inputs:
   pool:
     description: >-
-      The pool the image is for. Must match the pool given to ensure; the image
-      is named vgr-<pool>-<yyyymmdd> and ensure finds it by that.
+      The pool the image is for. Must match the pool given to ensure. The image
+      is built for the repo this workflow runs in and named
+      vgr-<pool>-<owner>_<repo>-<yyyymmdd>; ensure finds it by that.
     required: true
   server-type:
     description: >-

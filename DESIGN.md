@@ -325,7 +325,7 @@ Not chosen; revisit only if the temporary server turns out to be the problem.
    `ready` marker: `ready` is per VM, and a stale copy would let the registrar
    trust a VM whose setup failed.
 7. `createImage`: the provider stops the server (a snapshot of a running disk can
-   be inconsistent), snapshots it as `vgr-<pool>-<yyyymmdd>` and waits until the
+   be inconsistent), snapshots it as `vgr-<pool>-<owner>_<repo>-<yyyymmdd>` and waits until the
    image is active. A failed or never-active snapshot is deleted, so `ensure`
    cannot pick up a half-made image.
 8. Only then prune: keep the newest N (default 2, minimum 2) built images of the
@@ -337,8 +337,10 @@ Not chosen; revisit only if the temporary server turns out to be the problem.
    (which runs on a schedule in the consuming repo), after 3 hours.
 
 **`ensure`.** `image: latest-built` (OVH only; an error on Hetzner) resolves to the
-id of the newest `vgr-<pool>-<yyyymmdd>` image. The name must be the prefix plus
-exactly eight digits, so pool `ci` never sees pool `ci-sia`'s images. Any other
+id of the newest `vgr-<pool>-<owner>_<repo>-<yyyymmdd>` image of its own pool and
+repo (the repo is spelled `owner_name`, as in server labels). The name must be the
+prefix plus exactly eight digits, so another pool or repo whose name extends this
+one's is never matched or pruned. Any other
 `image` value is used as given, and nothing is listed. With no built image, or if
 the lookup fails, it boots `base-image` (the stock image) and warns: a repo works
 before its first build and survives a Glance outage, only slower. It also warns,
@@ -380,9 +382,10 @@ restated here.
 
 **Limits and decisions to review.**
 
-- Images are named by pool, not by repo, unlike servers. Use one repo per pool, or
-  two repos would boot and prune each other's images. Adding the repo to the name is
-  the fix if that becomes real.
+- Images are keyed by pool and repo, like servers (decided 2026-10-05; first named
+  by pool only, which would have let two repos on one pool boot and prune each
+  other's images). The builder takes the repo from `GITHUB_REPOSITORY`
+  (`VGR_REPO` overrides), so each repo that uses `latest-built` runs its own build.
 - A snapshot's minimum disk is the builder flavor's disk, so `ensure`'s flavor must
   have at least that much.
 - Minimum retention is 2: with 1, a build could delete the image a concurrent

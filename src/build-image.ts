@@ -33,6 +33,8 @@ export interface RegistryLogin {
 
 export interface BuildImageConfig {
   readonly pool: string;
+  /** `owner/name`: the repo the image is for. It is part of the image's name. */
+  readonly repo: string;
   readonly serverType: string;
   /** The stock image to build from. */
   readonly baseImage: string;
@@ -184,9 +186,9 @@ export const buildImage = async (
     if (prepull) await run("pulling container images", "bash -s", prepull);
     await run("cleaning for snapshot", "bash -s", finalize);
 
-    const image = await provider.createImage(server.id, imageName(cfg.pool, now()));
+    const image = await provider.createImage(server.id, imageName(cfg.pool, cfg.repo, now()));
     // Only after the new image exists, so a failed build never shrinks the set.
-    const pruned = await pruneImages(provider, cfg.pool, cfg.keep);
+    const pruned = await pruneImages(provider, cfg.pool, cfg.repo, cfg.keep);
     return { imageId: image.id, imageName: image.name, rebooted: needsReboot, pruned, sweptBuilders };
   } catch (e) {
     failure = e;

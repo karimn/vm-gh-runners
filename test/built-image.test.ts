@@ -46,14 +46,14 @@ const setup = (images: [name: string, ageDays: number][] = []) => {
 
 describe("ensure with image latest-built", () => {
   test("boots the newest built image, by id", async () => {
-    const t = setup([["vgr-ci-20260928", 7], ["vgr-ci-20261003", 2]]);
+    const t = setup([["vgr-ci-karimn_sia-20260928", 7], ["vgr-ci-karimn_sia-20261003", 2]]);
     const { outputs, summary } = await runEnsure(t.deps, cfg, { now: () => now });
 
     expect(t.specs).toHaveLength(1);
-    expect(t.specs[0]!.image).toBe("id-vgr-ci-20261003");
-    expect(outputs["image"]).toBe("vgr-ci-20261003");
+    expect(t.specs[0]!.image).toBe("id-vgr-ci-karimn_sia-20261003");
+    expect(outputs["image"]).toBe("vgr-ci-karimn_sia-20261003");
     expect(outputs["image_built"]).toBe("true");
-    expect(summary).toContain("image: vgr-ci-20261003 (built)");
+    expect(summary).toContain("image: vgr-ci-karimn_sia-20261003 (built)");
     expect(summary).not.toContain("::warning::");
   });
 
@@ -67,7 +67,7 @@ describe("ensure with image latest-built", () => {
   });
 
   test("boots a built image with the same user-data as a stock one: the script decides at boot", async () => {
-    const built = setup([["vgr-ci-20261003", 2]]);
+    const built = setup([["vgr-ci-karimn_sia-20261003", 2]]);
     const stock = setup();
     await runEnsure(built.deps, cfg, { now: () => now });
     await runEnsure(stock.deps, cfg, { now: () => now });
@@ -76,15 +76,15 @@ describe("ensure with image latest-built", () => {
   });
 
   test("warns, and still boots it, when the newest image is older than the limit", async () => {
-    const t = setup([["vgr-ci-20260915", 20]]);
+    const t = setup([["vgr-ci-karimn_sia-20260915", 20]]);
     const { summary } = await runEnsure(t.deps, cfg, { now: () => now });
-    expect(t.specs[0]!.image).toBe("id-vgr-ci-20260915");
-    expect(summary).toContain("::warning::the newest built image vgr-ci-20260915 is 20 days old (limit 14)");
+    expect(t.specs[0]!.image).toBe("id-vgr-ci-karimn_sia-20260915");
+    expect(summary).toContain("::warning::the newest built image vgr-ci-karimn_sia-20260915 is 20 days old (limit 14)");
     expect(summary).toContain("build-image workflow");
   });
 
   test("does not warn at the limit", async () => {
-    const t = setup([["vgr-ci-20260921", 14]]);
+    const t = setup([["vgr-ci-karimn_sia-20260921", 14]]);
     expect((await runEnsure(t.deps, cfg, { now: () => now })).summary).not.toContain("::warning::");
   });
 
@@ -99,7 +99,7 @@ describe("ensure with image latest-built", () => {
   });
 
   test("an explicit image is used as given and no image is listed", async () => {
-    const t = setup([["vgr-ci-20261003", 2]]);
+    const t = setup([["vgr-ci-karimn_sia-20261003", 2]]);
     const { outputs, summary } = await runEnsure(t.deps, { ...cfg, image: "Ubuntu 22.04" }, { now: () => now });
     expect(t.specs[0]!.image).toBe("Ubuntu 22.04");
     expect(t.provider.calls).not.toContain("listImages");
@@ -108,7 +108,7 @@ describe("ensure with image latest-built", () => {
   });
 
   test("a reused server is left alone and the summary names no image for it", async () => {
-    const t = setup([["vgr-ci-20261003", 2]]);
+    const t = setup([["vgr-ci-karimn_sia-20261003", 2]]);
     await runEnsure(t.deps, cfg, { now: () => now });
     const second = await runEnsure(t.deps, cfg, { now: () => now });
     expect(t.specs).toHaveLength(1);
@@ -118,7 +118,7 @@ describe("ensure with image latest-built", () => {
   });
 
   test("still registers the run's runners on a built image", async () => {
-    const t = setup([["vgr-ci-20261003", 2]]);
+    const t = setup([["vgr-ci-karimn_sia-20261003", 2]]);
     const { outputs } = await runEnsure(t.deps, cfg, { now: () => now });
     expect(outputs["registered"]).toBe("2");
     expect(t.deps.registrar.calls).toHaveLength(1);
@@ -168,6 +168,7 @@ describe("loadEnsureConfig image settings", () => {
 
 describe("loadBuildImageConfig", () => {
   const env = {
+    GITHUB_REPOSITORY: "karimn/sia",
     VGR_POOL: "ci",
     OS_APPLICATION_CREDENTIAL_ID: "i",
     OS_APPLICATION_CREDENTIAL_SECRET: "s",
@@ -176,9 +177,10 @@ describe("loadBuildImageConfig", () => {
     VGR_SSH_PRIVATE_KEY: "KEY",
   };
 
-  test("reads required values and applies defaults; needs no GitHub token or repo", () => {
+  test("reads required values and applies defaults; needs no GitHub token", () => {
     expect(loadBuildImageConfig(env)).toEqual({
       pool: "ci",
+      repo: "karimn/sia",
       provider: { kind: "ovh", authUrl: "https://auth.cloud.ovh.us/v3", credentialId: "i", credentialSecret: "s", region: "US-EAST-VA-1" },
       serverType: "b3-8",
       baseImage: "Ubuntu 24.04",
@@ -190,6 +192,13 @@ describe("loadBuildImageConfig", () => {
       sshKeyNames: ["k"],
       sshPrivateKey: "KEY",
     });
+  });
+
+  test("takes the repo from VGR_REPO over GITHUB_REPOSITORY, and requires owner/name", () => {
+    expect(loadBuildImageConfig({ ...env, VGR_REPO: "karimn/other" }).repo).toBe("karimn/other");
+    expect(() => loadBuildImageConfig({ ...env, VGR_REPO: "nope" })).toThrow("owner/name");
+    const { GITHUB_REPOSITORY: _omit, ...none } = env;
+    expect(() => loadBuildImageConfig(none)).toThrow("GITHUB_REPOSITORY");
   });
 
   test("splits pre-pull images on newlines and commas", () => {
@@ -235,6 +244,7 @@ describe("loadBuildImageConfig", () => {
 
 describe("cli build-image", () => {
   const env = {
+    GITHUB_REPOSITORY: "karimn/sia",
     VGR_POOL: "ci",
     OS_APPLICATION_CREDENTIAL_ID: "i",
     OS_APPLICATION_CREDENTIAL_SECRET: "s",
@@ -268,9 +278,9 @@ describe("cli build-image", () => {
 
     expect(code).toBe(0);
     const written = readFileSync(out, "utf8");
-    expect(written).toMatch(/image_name=vgr-ci-\d{8}\n/);
+    expect(written).toMatch(/image_name=vgr-ci-karimn_sia-\d{8}\n/);
     expect(written).toContain("pruned=0");
-    expect(lines.join("\n")).toContain("built image vgr-ci-");
+    expect(lines.join("\n")).toContain("built image vgr-ci-karimn_sia-");
     expect(f.disposed()).toBe(true);
     expect(provider.servers.size).toBe(0);
   });
@@ -290,12 +300,12 @@ describe("cli build-image", () => {
 
   test("exits 1 when an old image could not be pruned, so growing storage is noticed", async () => {
     const provider = new MockProvider(() => now, "prorated");
-    for (const n of ["20260101", "20260102", "20260103"]) provider.images.set(n, { id: n, name: `vgr-ci-${n}`, createdAt: daysAgo(100) });
+    for (const n of ["20260101", "20260102", "20260103"]) provider.images.set(n, { id: n, name: `vgr-ci-karimn_sia-${n}`, createdAt: daysAgo(100) });
     provider.failDeleteImageWith = new Error("glance said no");
     const lines: string[] = [];
     const code = await main(["build-image"], { ...env, VGR_KEEP_IMAGES: "2" }, factoryFor(provider, quickSsh()).factory, (l) => void lines.push(l));
     expect(code).toBe(1);
-    expect(lines.join("\n")).toContain("could not delete image vgr-ci-20260101");
+    expect(lines.join("\n")).toContain("could not delete image vgr-ci-karimn_sia-20260101");
   });
 
   test("a config error exits 1 before building anything", async () => {

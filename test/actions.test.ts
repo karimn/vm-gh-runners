@@ -353,6 +353,7 @@ describe("build-image/action.yml", () => {
       { provider, ssh: new FakeSsh((c) => (c.command === "test -f /var/run/reboot-required" ? { code: 1 } : undefined)) },
       {
         pool: "ci",
+        repo: "karimn/sia",
         provider: { kind: "ovh", authUrl: "https://x", credentialId: "i", credentialSecret: "s", region: "R" },
         serverType: "t", baseImage: "b", location: "l", runnerVersion: "2.337.0",
         extraPackages: [], prepullImages: [], keep: 2, sshKeyNames: ["k"], sshPrivateKey: "k",

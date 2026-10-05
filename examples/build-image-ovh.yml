@@ -22,10 +22,9 @@
 # 60 days without repository activity (private repositories are not affected).
 #
 # Constraints.
-#  - One repo per pool. Images are named vgr-<pool>-<yyyymmdd>, with no repo in
-#    the name, so two repos sharing a pool would boot, and prune, each other's
-#    images (with the wrong pre-pulled container). Servers are keyed by pool and
-#    repo; images are keyed by pool only.
+#  - Images are named vgr-<pool>-<owner>_<repo>-<yyyymmdd>, built for the repo this
+#    workflow runs in, so repos sharing a pool keep their own images and prune
+#    only their own. ensure uses the image of the repo it runs for.
 #  - server-type here must have a root disk no larger than ensure's flavor: the
 #    snapshot's minimum disk is the builder's disk size, and a smaller flavor
 #    refuses to boot it.
@@ -68,7 +67,7 @@ jobs:
     steps:
       - uses: karimn/vm-gh-runners/build-image@main
         with:
-          # Must match the pool given to ensure: the image is vgr-<pool>-<yyyymmdd>.
+          # Must match the pool given to ensure: the image is vgr-<pool>-<owner>_<repo>-<yyyymmdd>.
           pool: ci
           location: US-EAST-VA-1
           # The smallest flavor whose disk holds the OS, Docker and pre-pulled

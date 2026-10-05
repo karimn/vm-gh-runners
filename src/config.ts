@@ -68,6 +68,8 @@ export interface EnsureCliConfig extends CommonConfig {
 
 export interface BuildImageCliConfig {
   readonly pool: string;
+  /** `owner/name`; in Actions it is `GITHUB_REPOSITORY`. Part of the image's name. */
+  readonly repo: string;
   readonly provider: ProviderConfig;
   readonly serverType: string;
   readonly baseImage: string;
@@ -134,9 +136,14 @@ const providerConfig = (env: Env): ProviderConfig => {
   throw new Error(`VGR_PROVIDER must be hetzner or ovh, got "${kind}"`);
 };
 
-const common = (env: Env): CommonConfig => {
+const repoFrom = (env: Env): string => {
   const repo = env["VGR_REPO"]?.trim() || required(env, "GITHUB_REPOSITORY");
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) throw new Error("the repo must be in owner/name form");
+  return repo;
+};
+
+const common = (env: Env): CommonConfig => {
+  const repo = repoFrom(env);
   const runId = env["VGR_RUN_ID"]?.trim();
   // Actions passes an unset input as "". Anything else must be a real run id.
   if (runId && !/^\d{1,20}$/.test(runId)) throw new Error("VGR_RUN_ID must be a workflow run id (digits only)");
@@ -233,6 +240,7 @@ export const loadBuildImageConfig = (env: Env): BuildImageCliConfig => {
   }
   return {
     pool: required(env, "VGR_POOL"),
+    repo: repoFrom(env),
     provider,
     serverType: required(env, "VGR_SERVER_TYPE"),
     baseImage: env["VGR_BASE_IMAGE"]?.trim() || DEFAULTS.ovh.image,

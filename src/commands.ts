@@ -144,6 +144,7 @@ export const runBuildImage = async (
     deps,
     {
       pool: cfg.pool,
+      repo: cfg.repo,
       serverType: cfg.serverType,
       baseImage: cfg.baseImage,
       location: cfg.location,
