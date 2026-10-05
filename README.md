@@ -29,6 +29,40 @@ Three composite actions, called from CI workflows:
   remove a busy runner). It needs the same SSH key as `ensure`.
   [Example](examples/release.yml).
 
+## Runner labels (breaking change, 2026-10-05)
+
+Runners are registered with `config.sh --no-default-labels`, so they carry **only**
+the labels below, not GitHub's defaults `self-hosted`, `Linux` and `X64`:
+
+| Mode | Runner labels = `runs_on` |
+| --- | --- |
+| shared pool (no `run-id`) | `vm-gh-runners`, `pool-<pool>` |
+| per run (`run-id`) | `vm-gh-runners`, `pool-<pool>`, `run-<id>` |
+
+(`runner-labels` replaces the first two, and `run-<id>` is still appended.)
+
+Before, any job in the repo with `runs-on: self-hosted`, whichever workflow or
+run it belonged to, could be scheduled on a pool VM, including another run's
+private per-run VM. It then held a runner the owning run needed, was killed when
+the owner's teardown deleted the VM, and kept `reap`'s busy check true. Now only a
+job that asks for the pool's labels can land there, in both modes.
+
+What callers must change:
+
+- Use `fromJSON(needs.<job>.outputs.runs_on)` for jobs meant for the VM. A
+  hard-coded `runs-on: [self-hosted, vm-gh-runners, ...]` no longer matches
+  anything; drop `self-hosted` from it.
+- A job with plain `runs-on: self-hosted` now runs only on your other self-hosted
+  runners, never on a pool VM. If it used to rely on landing on the VM, give it
+  `runs_on`.
+- `runner-labels` may not include `self-hosted`, `linux` or `x64` (in any case):
+  that would reopen the VMs to every self-hosted job. A pinned `runner-version`
+  must be 2.305.0 or later, the first runner with `--no-default-labels`.
+- A shared-pool VM that already exists keeps its old runners, and their default
+  labels, until it is deleted: `ensure` does not re-register healthy runners. Let
+  `reap` delete it (or delete it by hand) after upgrading. Per-run VMs are created
+  fresh for each run and need nothing.
+
 ## One VM per run, or one shared VM
 
 By default every run of a repo shares the pool's one VM, and its jobs share the
@@ -71,7 +105,7 @@ Give `ensure` the run's id and each workflow run gets **its own VM**:
   deleted that VM, so the re-run jobs wait for runners labelled `run-<id>` that no
   longer exist (a queued job is not bound by `timeout-minutes`; cancel it and use
   "Re-run all jobs").
-- **One mode per pool.** A shared-mode job's labels (`self-hosted`, `vm-gh-runners`,
+- **One mode per pool.** A shared-mode job's labels (`vm-gh-runners`,
   `pool-<pool>`) are a subset of a per-run runner's, so a shared-mode workflow on
   the same pool can land on another run's runners. Every workflow that uses a pool
   must pass `run-id`, or none.

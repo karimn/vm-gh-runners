@@ -2,11 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, statSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { main, type Factory } from "../src/cli.ts";
+import { ensureRegistrarOptions, main, type Factory } from "../src/cli.ts";
+import { runEnsure } from "../src/commands.ts";
+import { loadEnsureConfig } from "../src/config.ts";
 import { withKeyFile } from "../src/keyfile.ts";
 import { MockGithub } from "../src/mock-github.ts";
 import { MockProvider } from "../src/mock-provider.ts";
 import { MockRegistrar } from "../src/mock-registrar.ts";
+import type { Ssh } from "../src/ssh.ts";
+import { SshRegistrar } from "../src/ssh-registrar.ts";
+import { configInvocation } from "./config-invocation.ts";
 
 const env = {
   GITHUB_REPOSITORY: "karimn/sia",
@@ -224,5 +229,44 @@ describe("main with the ovh provider", () => {
     const text = t.lines.join("\n");
     expect(text).toContain("OS_APPLICATION_CREDENTIAL_SECRET");
     expect(text).not.toContain("cred-id");
+  });
+});
+
+describe("ensure's runs_on and the labels its runners are registered with", () => {
+  // Wired as realFactory wires them: config from the environment, the real
+  // registrar's script, and ensure's output. A job asking for runs_on must match
+  // these runners, and only a job asking for them may.
+  const registeredLabels = async (e: Record<string, string>) => {
+    const cfg = loadEnsureConfig(e);
+    const scripts: string[] = [];
+    const ssh: Ssh = {
+      async exec(_host, command, stdin) {
+        if (command === "bash -s") scripts.push(stdin!);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+    const github = { createRegistrationToken: async () => "REG-TOKEN" };
+    const server = { id: "1", name: "srv", labels: {}, createdAt: new Date(), status: "running" as const, address: "192.0.2.1" };
+    await new SshRegistrar(ensureRegistrarOptions(cfg, github, ssh)).register(server, ["srv-1"]);
+    const { configCmd, labelsArg } = configInvocation(scripts[0]!);
+
+    const mockGithub = new MockGithub();
+    const { outputs } = await runEnsure(
+      { provider: new MockProvider(() => new Date()), github: mockGithub, registrar: new MockRegistrar(mockGithub) },
+      cfg,
+    );
+    return { configCmd, registered: labelsArg.split(","), runsOn: JSON.parse(outputs["runs_on"]!) as string[] };
+  };
+
+  test.each([
+    ["shared pool", {}, ["vm-gh-runners", "pool-ci"]],
+    ["per run", { VGR_RUN_ID: "37350044108" }, ["vm-gh-runners", "pool-ci", "run-37350044108"]],
+    ["caller's labels, per run", { VGR_RUN_ID: "7", VGR_RUNNER_LABELS: "big,gpu" }, ["big", "gpu", "run-7"]],
+  ])("%s: identical, and without GitHub's default labels", async (_mode, extra, expected) => {
+    const { configCmd, registered, runsOn } = await registeredLabels({ ...env, ...extra });
+    expect(configCmd).toContain("--no-default-labels");
+    expect(registered).toEqual(expected);
+    expect(runsOn).toEqual(registered);
+    expect(runsOn.map((l) => l.toLowerCase())).not.toContain("self-hosted");
   });
 });

@@ -127,13 +127,44 @@ const common = (env: Env): CommonConfig => {
 };
 
 /**
+ * GitHub's default runner labels. Runners are registered without them, so a
+ * plain `runs-on: self-hosted` job elsewhere in the repo cannot land on a pool
+ * VM; a caller listing one would quietly undo that. GitHub matches labels
+ * case-insensitively, so this does too.
+ */
+const DEFAULT_GITHUB_LABELS = new Set(["self-hosted", "linux", "x64"]);
+
+/**
  * With a run id the labels must be run-scoped, or two runs' jobs could land on
  * each other's runners. A caller's own labels get `run-<id>` appended if missing.
  */
 const runnerLabels = (given: readonly string[], base: CommonConfig): readonly string[] => {
+  const reserved = given.filter((l) => DEFAULT_GITHUB_LABELS.has(l.toLowerCase()));
+  if (reserved.length > 0) {
+    throw new Error(
+      `VGR_RUNNER_LABELS must not include GitHub's default labels (${reserved.join(", ")}): ` +
+        "runners are registered without them so that jobs targeting them cannot land on the pool's VMs",
+    );
+  }
   const labels = given.length > 0 ? given : ["vm-gh-runners", `pool-${base.pool}`];
   const run = base.runId === undefined ? undefined : `run-${base.runId}`;
   return run === undefined || labels.includes(run) ? labels : [...labels, run];
+};
+
+/** `config.sh --no-default-labels` first shipped in runner v2.305.0. */
+const MIN_RUNNER_VERSION = [2, 305, 0] as const;
+
+const runnerVersion = (env: Env): string => {
+  const v = env["VGR_RUNNER_VERSION"]?.trim() || "latest";
+  if (v === "latest") return v;
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(v);
+  if (!m) throw new Error(`VGR_RUNNER_VERSION must be "latest" or a version such as 2.321.0, got "${v}"`);
+  const parts = m.slice(1).map(Number);
+  const i = parts.findIndex((p, k) => p !== MIN_RUNNER_VERSION[k]);
+  if (i !== -1 && parts[i]! < MIN_RUNNER_VERSION[i]!) {
+    throw new Error(`VGR_RUNNER_VERSION must be at least ${MIN_RUNNER_VERSION.join(".")} (--no-default-labels), got ${v}`);
+  }
+  return v;
 };
 
 export const loadEnsureConfig = (env: Env): EnsureCliConfig => {
@@ -151,7 +182,7 @@ export const loadEnsureConfig = (env: Env): EnsureCliConfig => {
     location: base.provider.kind === "ovh" ? base.provider.region : env["VGR_LOCATION"]?.trim() || defaults.location,
     runnerCount: integer(env, "VGR_RUNNER_COUNT", 1) ?? 3,
     labels: runnerLabels(labels, base),
-    runnerVersion: env["VGR_RUNNER_VERSION"]?.trim() || "latest",
+    runnerVersion: runnerVersion(env),
     extraPackages: list(env["VGR_EXTRA_PACKAGES"]),
     sshKeyNames,
     sshPrivateKey: required(env, "VGR_SSH_PRIVATE_KEY"),
