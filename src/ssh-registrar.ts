@@ -12,7 +12,10 @@ export interface SshRegistrarOptions {
   /** `owner/name`. */
   readonly repo: string;
   readonly ssh: Ssh;
-  /** Labels every runner gets; jobs select the VM with `runs-on: [self-hosted, <label>]`. */
+  /**
+   * The runner's whole label set. GitHub's defaults (`self-hosted`, OS, arch)
+   * are suppressed, so only a job that asks for these labels can land here.
+   */
   readonly labels?: readonly string[];
   /** Unprivileged account the runners run as. The runner refuses to run as root. */
   readonly runnerUser?: string;
@@ -59,6 +62,8 @@ export class SshRegistrar implements RunnerRegistrar {
       ...opts,
     };
     if (!REPO.test(o.repo)) throw new Error(`repo must be "owner/name", got "${o.repo}"`);
+    // config.sh refuses --no-default-labels without --labels.
+    if (o.labels.length === 0) throw new Error("a runner needs at least one label");
     for (const l of o.labels) {
       if (!LABEL.test(l)) throw new Error(`invalid runner label "${l}"`);
     }
@@ -176,6 +181,11 @@ printf '\\n%s\\n%s\\n' ${shq(`ACTIONS_RUNNER_HOOK_JOB_STARTED=${hook}`)} ${shq(`
    * is on the runner's command line for the moment it runs; that is the runner's
    * documented interface, and it is a short-lived single-purpose token on a
    * single-tenant VM.
+   *
+   * `--no-default-labels` matters for isolation: with GitHub's default
+   * `self-hosted` label, any `runs-on: self-hosted` job in the repo, from any
+   * run, could be scheduled here. `--replace` clears the old labels before
+   * applying these, so a repaired runner does not get the defaults back.
    */
   private script(name: string, token: string): string {
     const { repo, labels, runnerUser, runnerTemplateDir, runnersDir } = this.o;
@@ -192,7 +202,7 @@ install -d -o ${shq(runnerUser)} -g ${shq(runnerUser)} ${shq(runnersDir)}
 cp -r ${shq(runnerTemplateDir)} "$DIR"
 chown -R ${shq(runnerUser)}:${shq(runnerUser)} "$DIR"
 
-runuser -u ${shq(runnerUser)} -- bash -c 'cd "$1" && ./config.sh --unattended --replace --url "$2" --token "$3" --name "$4" --labels "$5" --work _work' _ \\
+runuser -u ${shq(runnerUser)} -- bash -c 'cd "$1" && ./config.sh --unattended --replace --url "$2" --token "$3" --name "$4" --no-default-labels --labels "$5" --work _work' _ \\
   "$DIR" ${shq(`https://github.com/${repo}`)} "$TOKEN" "$NAME" ${shq(labels.join(","))}
 
 ${this.ownershipHookScript(name)}

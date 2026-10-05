@@ -3,6 +3,7 @@ import type { Server } from "../src/provider.ts";
 import type { Ssh, SshResult } from "../src/ssh.ts";
 import { SshRegistrar, shq } from "../src/ssh-registrar.ts";
 import { READY_FILE } from "../src/userdata.ts";
+import { configInvocation } from "./config-invocation.ts";
 
 const server: Server = {
   id: "1",
@@ -145,6 +146,23 @@ describe("registration", () => {
     expect(script).toContain("vm-gh-runners,pool-ci");
     expect(script).toContain("runuser -u 'runner'");
     expect(script.indexOf("config.sh")).toBeLessThan(script.indexOf("svc.sh start"));
+  });
+
+  test("registers with only the given labels, never GitHub's defaults", async () => {
+    // With the default `self-hosted` label, any `runs-on: self-hosted` job in the
+    // repo, from any run, could be scheduled on this VM.
+    const { ssh, calls } = fakeSsh();
+    await build(ssh, { labels: ["vm-gh-runners", "pool-ci", "run-42"] }).register(server, ["srv-1"]);
+
+    const script = calls.find((c) => c.command === "bash -s")!.stdin!;
+    const { configCmd, labelsArg } = configInvocation(script);
+    expect(configCmd).toContain(" --no-default-labels ");
+    expect(configCmd).toContain(' --labels "$5" ');
+    expect(labelsArg).toBe("vm-gh-runners,pool-ci,run-42");
+  });
+
+  test("refuses an empty label set, which config.sh rejects with --no-default-labels", () => {
+    expect(() => build(fakeSsh().ssh, { labels: [] })).toThrow("at least one label");
   });
 
   test("hands the workspace back to the runner user before and after every job (#4)", async () => {

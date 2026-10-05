@@ -64,7 +64,8 @@ export const runEnsure = async (
       created: String(r.created),
       registered: String(r.registered.length),
       // Feed straight into `runs-on: ${{ fromJSON(...) }}` so callers hard-code nothing.
-      runs_on: JSON.stringify(["self-hosted", ...cfg.labels]),
+      // Exactly the runners' labels: they carry no `self-hosted` (see SshRegistrar).
+      runs_on: JSON.stringify(cfg.labels),
     },
     summary:
       `server ${r.server.name} (${r.server.id}): ${r.created ? "created" : "reused"}; ` +

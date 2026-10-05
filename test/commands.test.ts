@@ -58,7 +58,8 @@ describe("runEnsure", () => {
 
   test("exposes the labels jobs should target as a JSON runs-on array", async () => {
     const { outputs } = await runEnsure({ provider, github, registrar }, ensureCfg);
-    expect(JSON.parse(outputs["runs_on"]!)).toEqual(["self-hosted", "vm-gh-runners", "pool-ci"]);
+    // No `self-hosted`: the runners do not carry it, so jobs must not ask for it.
+    expect(JSON.parse(outputs["runs_on"]!)).toEqual(["vm-gh-runners", "pool-ci"]);
   });
 
   test("reuses the server on a second call and registers nothing", async () => {

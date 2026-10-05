@@ -22,8 +22,8 @@ import {
 import { GithubClient } from "./github-client.ts";
 import { withKeyFile } from "./keyfile.ts";
 import { createProvider } from "./providers.ts";
-import { SshRegistrar } from "./ssh-registrar.ts";
-import { SystemSsh } from "./ssh.ts";
+import { SshRegistrar, type SshRegistrarOptions, type TokenSource } from "./ssh-registrar.ts";
+import { SystemSsh, type Ssh } from "./ssh.ts";
 
 export interface EnsureRuntime extends EnsureDeps {
   dispose(): void;
@@ -43,6 +43,17 @@ export interface Factory {
   release(cfg: ReleaseCliConfig): Promise<ReleaseRuntime>;
 }
 
+/**
+ * The registrar ensure uses. Its labels are the same list ensure's `runs_on`
+ * output is built from, so jobs ask for exactly the labels the runners carry.
+ */
+export const ensureRegistrarOptions = (cfg: EnsureCliConfig, github: TokenSource, ssh: Ssh): SshRegistrarOptions => ({
+  github,
+  repo: cfg.repo,
+  ssh,
+  labels: cfg.labels,
+});
+
 export const realFactory: Factory = {
   async ensure(cfg) {
     const key = withKeyFile(cfg.sshPrivateKey);
@@ -50,12 +61,7 @@ export const realFactory: Factory = {
     return {
       provider: createProvider(cfg.provider, { sshKeys: cfg.sshKeyNames }),
       github,
-      registrar: new SshRegistrar({
-        github,
-        repo: cfg.repo,
-        ssh: new SystemSsh({ keyPath: key.path }),
-        labels: cfg.labels,
-      }),
+      registrar: new SshRegistrar(ensureRegistrarOptions(cfg, github, new SystemSsh({ keyPath: key.path }))),
       dispose: key.dispose,
     };
   },

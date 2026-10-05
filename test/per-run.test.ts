@@ -71,6 +71,11 @@ describe("ensure with run-id", () => {
     expect(la.includes("run-222")).toBe(false);
   });
 
+  test("runs_on is exactly the run's labels, with no self-hosted", async () => {
+    const { outputs } = await runEnsure(deps(), cfgFor("111"));
+    expect(JSON.parse(outputs["runs_on"]!)).toEqual(["vm-gh-runners", "pool-sia-ci", "run-111"]);
+  });
+
   test("records the run on the server and keeps the pool label", async () => {
     await runEnsure(deps(), cfgFor("111"));
     const [s] = [...provider.servers.values()];
@@ -97,7 +102,7 @@ describe("ensure with run-id", () => {
     const shared = await runEnsure(deps(), cfgFor());
     expect(shared.outputs["created"]).toBe("true");
     expect(provider.servers.size).toBe(2);
-    expect(JSON.parse(shared.outputs["runs_on"]!)).toEqual(["self-hosted", "vm-gh-runners", "pool-sia-ci"]);
+    expect(JSON.parse(shared.outputs["runs_on"]!)).toEqual(["vm-gh-runners", "pool-sia-ci"]);
     const again = await runEnsure(deps(), cfgFor());
     expect(again.outputs["server_id"]).toBe(shared.outputs["server_id"]);
   });

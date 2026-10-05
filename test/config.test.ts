@@ -13,6 +13,25 @@ const base = {
 };
 
 describe("loadEnsureConfig", () => {
+  test.each(["self-hosted", "Self-Hosted", "linux", "X64"])(
+    "rejects GitHub's default label %s in runner-labels, which would reopen the VMs to any self-hosted job",
+    (l) => {
+      expect(() => loadEnsureConfig({ ...base, VGR_RUNNER_LABELS: `fast,${l}` })).toThrow("default labels");
+    },
+  );
+
+  test.each(["2.305.0", "2.337.0", "3.0.0"])("accepts runner version %s", (v) => {
+    expect(loadEnsureConfig({ ...base, VGR_RUNNER_VERSION: v }).runnerVersion).toBe(v);
+  });
+
+  test.each(["2.304.9", "2.300.0", "1.999.0"])("rejects runner version %s, older than --no-default-labels", (v) => {
+    expect(() => loadEnsureConfig({ ...base, VGR_RUNNER_VERSION: v })).toThrow("at least 2.305.0");
+  });
+
+  test("rejects a runner version that is not x.y.z", () => {
+    expect(() => loadEnsureConfig({ ...base, VGR_RUNNER_VERSION: "v2.321.0" })).toThrow("VGR_RUNNER_VERSION");
+  });
+
   test("reads required values and applies defaults", () => {
     expect(loadEnsureConfig(base)).toEqual({
       repo: "karimn/sia",
