@@ -15,8 +15,8 @@ bun run typecheck
 - TypeScript on Bun, strict mode. Provider-specific code lives only behind the
   `Provider` interface in `src/provider.ts`; everything else stays cloud-neutral.
 - GitHub Actions only. Do not generalise to other CI systems.
-- Hetzner is the default provider so existing callers do not break; OVH is
-  selected with `provider: ovh`.
+- OVH is the default provider (decided 2026-10-05); Hetzner callers must pass
+  `provider: hetzner`.
 - This repo is public. Never commit tokens, keys, or real server IDs.
 - Feature work happens in a worktree, not the main checkout.
 

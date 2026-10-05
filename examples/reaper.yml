@@ -33,5 +33,6 @@ jobs:
       - uses: karimn/vm-gh-runners/reap@main
         with:
           pool: ci
+          provider: hetzner
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
           github-token: ${{ secrets.VGR_GITHUB_TOKEN }}

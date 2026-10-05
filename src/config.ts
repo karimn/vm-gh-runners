@@ -87,7 +87,7 @@ const integer = (env: Env, name: string, min: number, max = Infinity): number | 
 };
 
 const providerConfig = (env: Env): ProviderConfig => {
-  const kind = env["VGR_PROVIDER"]?.trim() || "hetzner";
+  const kind = env["VGR_PROVIDER"]?.trim() || "ovh";
   if (kind === "hetzner") return { kind, token: required(env, "HCLOUD_TOKEN") };
   if (kind === "ovh") {
     const authUrl = env["OS_AUTH_URL"]?.trim() || "https://auth.cloud.ovh.us/v3";

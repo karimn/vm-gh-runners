@@ -1,7 +1,7 @@
 # vm-gh-runners: design
 
-GitHub Actions only. Provider-neutral. Providers: Hetzner Cloud (the default and
-the first) and OVHcloud Public Cloud.
+GitHub Actions only. Provider-neutral. Providers: OVHcloud Public Cloud (the
+default) and Hetzner Cloud (the first).
 
 ## Goal
 

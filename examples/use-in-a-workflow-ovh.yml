@@ -3,9 +3,12 @@
 #
 # Run tests on a pooled OVH VM. The first job reuses the pool's VM or creates one
 # and makes sure its runners are up; the second runs on those runners. Nothing
-# here deletes the VM: the scheduled reaper (examples/reaper-ovh.yml) does, as
-# soon as the VM is idle. OVH bills a server for the time it exists, so unlike
-# Hetzner there is no paid hour to wait out.
+# OVH bills a server for the time it exists, so unlike Hetzner there is no paid
+# hour to wait out: the `teardown` job at the end runs the reap action, which
+# deletes the VM as soon as the tests are done. It keeps the VM if another run of
+# this repo is queued or in progress (that run needs it), and the scheduled
+# reaper (examples/reaper-ovh.yml) stays as the safety net for runs that never
+# reach teardown, such as a cancelled one.
 #
 # Secrets to add to the repo (Settings > Secrets and variables > Actions):
 #   OVH_APPLICATION_CREDENTIAL_ID      Application credential, created as UNRESTRICTED
@@ -34,7 +37,7 @@ jobs:
         uses: karimn/vm-gh-runners/ensure@main
         with:
           pool: ci
-          provider: ovh
+          provider: ovh # the default; shown for clarity
           # The OVH US account's Keystone (https://auth.cloud.ovh.us/v3) and
           # region (US-EAST-VA-1) are the defaults. An EU account sets
           # ovh-auth-url (https://auth.cloud.ovh.net/v3) and a location such as GRA11.
@@ -58,3 +61,22 @@ jobs:
     runs-on: ${{ fromJSON(needs.vm.outputs.runs_on) }}
     steps:
       - uses: actions/checkout@v4
+
+  # Runs even if the tests failed or were cancelled. It must NOT run on a pool
+  # runner: the pool's runners are `self-hosted` too, and the job would then be
+  # the busy runner that makes reap keep the server. Give your own (non-pool)
+  # runners a custom label and list it here, e.g. [self-hosted, my-laptop].
+  teardown:
+    needs: [vm, test]
+    if: ${{ always() && needs.vm.result == 'success' }}
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: karimn/vm-gh-runners/reap@main
+        with:
+          pool: ci
+          provider: ovh # the default; shown for clarity
+          location: US-EAST-VA-1
+          ovh-application-credential-id: ${{ secrets.OVH_APPLICATION_CREDENTIAL_ID }}
+          ovh-application-credential-secret: ${{ secrets.OVH_APPLICATION_CREDENTIAL_SECRET }}
+          github-token: ${{ secrets.VGR_GITHUB_TOKEN }}

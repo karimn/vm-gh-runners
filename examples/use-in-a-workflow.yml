@@ -30,6 +30,7 @@ jobs:
         uses: karimn/vm-gh-runners/ensure@main
         with:
           pool: ci
+          provider: hetzner
           server-type: cpx62
           ssh-key-names: ci-key
           ssh-private-key: ${{ secrets.VGR_SSH_PRIVATE_KEY }}

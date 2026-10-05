@@ -101,7 +101,7 @@ describe.each(["ensure", "reap", "release"])("%s provider inputs", (dir) => {
   const action = load(dir);
   const env = cliStep(action).env ?? {};
 
-  test("selects the provider, and defaults to hetzner by leaving it unset", () => {
+  test("selects the provider, and defaults to ovh by leaving it unset (the CLI decides)", () => {
     expect(env["VGR_PROVIDER"]).toBe("${{ inputs.provider }}");
     expect(action.inputs["provider"]?.required).not.toBe(true);
     expect(action.inputs["provider"]?.default).toBeUndefined();

@@ -1,8 +1,8 @@
 name: vm-gh-runners reap
 description: >-
-  Delete the pool's idle servers: in the last minutes of their paid hour on
-  Hetzner, which bills per started hour, and as soon as they are idle on OVH,
-  which bills by runtime. Run it on a schedule (every 5 minutes) from the
+  Delete the pool's idle servers: as soon as they are idle on OVH, which bills
+  by runtime, and in the last minutes of their paid hour on Hetzner, which
+  bills per started hour. Run it on a schedule (every 5 minutes) from the
   consuming repo.
 
 inputs:
@@ -11,8 +11,9 @@ inputs:
     required: true
   provider:
     description: >-
-      Cloud to run on, hetzner or ovh. Defaults to hetzner. Each needs its own
-      credentials, below; the other provider's can be left unset.
+      Cloud to run on, ovh or hetzner. Defaults to ovh. Each needs its own
+      credentials, below; the other provider's can be left unset. A caller that
+      uses Hetzner must set this to hetzner.
     required: false
   hcloud-token:
     description: Hetzner project API token (read and write). Required when provider is hetzner. Pass it from a secret.

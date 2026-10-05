@@ -11,6 +11,7 @@ import { MockRegistrar } from "../src/mock-registrar.ts";
 const env = {
   GITHUB_REPOSITORY: "karimn/sia",
   VGR_POOL: "ci",
+  VGR_PROVIDER: "hetzner",
   HCLOUD_TOKEN: "hz-secret",
   VGR_GITHUB_TOKEN: "gh-secret",
   VGR_SERVER_TYPE: "cpx62",

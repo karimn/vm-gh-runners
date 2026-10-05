@@ -2,7 +2,7 @@
 
 Run GitHub Actions jobs on a rented VM that is reused while it is paid for, and
 deleted when it goes idle. Callers change one `runs-on:` line. Providers: Hetzner
-Cloud (the default) and OVHcloud Public Cloud.
+Cloud and OVHcloud Public Cloud (the default).
 
 Status: early. Unit-tested against mocks and fake HTTP; not yet run against a
 real Hetzner or OVH project. See [DESIGN.md](DESIGN.md) for how it works and why.
@@ -13,12 +13,13 @@ Three composite actions, called from CI workflows:
 
 - [`ensure/`](ensure/action.yml) reuses or creates the pool's VM and registers its
   runners. Use its `runs_on` output as the labels of the jobs that should run there.
-  [Hetzner example](examples/use-in-a-workflow.yml),
-  [OVH example](examples/use-in-a-workflow-ovh.yml).
+  [OVH example](examples/use-in-a-workflow-ovh.yml) (with a teardown job that
+  deletes the VM as soon as the tests finish),
+  [Hetzner example](examples/use-in-a-workflow.yml).
 - [`reap/`](reap/action.yml) deletes idle VMs: in the last minutes of their paid
   hour on Hetzner, at once on OVH (see [Providers](#providers)). Run it on a
-  schedule, at least every 5 minutes. [Hetzner example](examples/reaper.yml),
-  [OVH example](examples/reaper-ovh.yml).
+  schedule, at least every 5 minutes. [OVH example](examples/reaper-ovh.yml),
+  [Hetzner example](examples/reaper.yml).
 - [`release/`](release/action.yml) hands the pool's VM to someone else once CI is
   done with it: it deregisters the runners, removes their services, and relabels
   and renames the VM so `reap` and `ensure` no longer see it. **Billing continues
@@ -36,18 +37,19 @@ half is uploaded to the cloud project. The example files list them.
 
 ## Providers
 
-Pick one with the `provider` input of `ensure`, `reap` and `release`: `hetzner`
-(the default, so existing workflows keep working) or `ovh`. Give the same
-`provider` (and, on OVH, `location`) to all three.
+Pick one with the `provider` input of `ensure`, `reap` and `release`: `ovh` (the
+default) or `hetzner`. **A workflow written for Hetzner before OVH existed must
+now add `provider: hetzner`**, or it fails asking for an OVH credential. Give the
+same `provider` (and, on OVH, `location`) to all three.
 
-| | Hetzner | OVH |
+| | OVH (default) | Hetzner |
 | --- | --- | --- |
-| Credential | `hcloud-token` | `ovh-application-credential-id` and `-secret` |
-| `server-type` | server type, e.g. `cpx62` | flavor, e.g. `b3-32` |
-| `location` | `nbg1` (default) | region, `US-EAST-VA-1` (default) |
-| `image` | `ubuntu-24.04` (default) | `Ubuntu 24.04` (default) |
-| `ssh-key-names` | one or more keys in the project | exactly one key pair, in the region |
-| Billing | per started hour, so an idle VM is deleted in the last minutes of the paid hour | by runtime, so an idle VM is deleted at the next reap |
+| Credential | `ovh-application-credential-id` and `-secret` | `hcloud-token` |
+| `server-type` | flavor, e.g. `b3-32` | server type, e.g. `cpx62` |
+| `location` | region, `US-EAST-VA-1` (default) | `nbg1` (default) |
+| `image` | `Ubuntu 24.04` (default) | `ubuntu-24.04` (default) |
+| `ssh-key-names` | exactly one key pair, in the region | one or more keys in the project |
+| Billing | by runtime, so an idle VM is deleted at once | per started hour, so an idle VM is deleted in the last minutes of the paid hour |
 
 OVH setup, once per project (the same steps as pioneer's `OVH_SETUP.md`):
 

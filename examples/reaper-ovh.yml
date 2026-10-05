@@ -35,7 +35,7 @@ jobs:
       - uses: karimn/vm-gh-runners/reap@main
         with:
           pool: ci
-          provider: ovh
+          provider: ovh # the default; shown for clarity
           location: US-EAST-VA-1
           ovh-application-credential-id: ${{ secrets.OVH_APPLICATION_CREDENTIAL_ID }}
           ovh-application-credential-secret: ${{ secrets.OVH_APPLICATION_CREDENTIAL_SECRET }}

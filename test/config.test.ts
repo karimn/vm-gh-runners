@@ -4,6 +4,7 @@ import { loadEnsureConfig, loadReapConfig, loadReleaseConfig } from "../src/conf
 const base = {
   GITHUB_REPOSITORY: "karimn/sia",
   VGR_POOL: "ci",
+  VGR_PROVIDER: "hetzner",
   HCLOUD_TOKEN: "hz-secret",
   VGR_GITHUB_TOKEN: "gh-secret",
   VGR_SERVER_TYPE: "cpx62",
@@ -116,6 +117,7 @@ describe("loadReapConfig", () => {
   const reapBase = {
     GITHUB_REPOSITORY: "karimn/sia",
     VGR_POOL: "ci",
+    VGR_PROVIDER: "hetzner",
     HCLOUD_TOKEN: "hz-secret",
     VGR_GITHUB_TOKEN: "gh-secret",
   };
@@ -150,6 +152,7 @@ describe("loadReleaseConfig", () => {
   const relBase = {
     GITHUB_REPOSITORY: "karimn/sia",
     VGR_POOL: "ci",
+    VGR_PROVIDER: "hetzner",
     HCLOUD_TOKEN: "hz-secret",
     VGR_GITHUB_TOKEN: "gh-secret",
     VGR_SSH_PRIVATE_KEY: "PRIVATE-KEY-BODY",
@@ -208,9 +211,15 @@ describe("provider selection", () => {
     VGR_SSH_KEY_NAMES: "sia-ci-key",
   };
 
-  test("defaults to hetzner, and treats a blank provider as unset (an unset action input)", () => {
-    expect(loadEnsureConfig(base).provider.kind).toBe("hetzner");
-    expect(loadEnsureConfig({ ...base, VGR_PROVIDER: "" }).provider.kind).toBe("hetzner");
+  test("defaults to ovh, and treats a blank provider as unset (an unset action input)", () => {
+    expect(loadEnsureConfig(ovh).provider.kind).toBe("ovh");
+    expect(loadEnsureConfig({ ...ovh, VGR_PROVIDER: "" }).provider.kind).toBe("ovh");
+    expect(loadEnsureConfig({ ...ovh, VGR_PROVIDER: undefined }).provider.kind).toBe("ovh");
+  });
+
+  test("a caller that gives only a Hetzner token must now say provider: hetzner", () => {
+    const { VGR_PROVIDER: _, ...noProvider } = base;
+    expect(() => loadEnsureConfig(noProvider)).toThrow("OS_APPLICATION_CREDENTIAL_ID");
   });
 
   test("rejects an unknown provider, naming the choices", () => {
@@ -300,7 +309,7 @@ describe("provider selection", () => {
   });
 
   test("a window start is still honoured on hetzner, and a stray location is ignored there", () => {
-    const hz = { GITHUB_REPOSITORY: "karimn/sia", VGR_POOL: "ci", VGR_GITHUB_TOKEN: "gh", HCLOUD_TOKEN: "t" };
+    const hz = { VGR_PROVIDER: "hetzner", GITHUB_REPOSITORY: "karimn/sia", VGR_POOL: "ci", VGR_GITHUB_TOKEN: "gh", HCLOUD_TOKEN: "t" };
     expect(loadReapConfig({ ...hz, VGR_WINDOW_START_MINUTE: "45", VGR_LOCATION: "US-EAST-VA-1" }).windowStartMinute).toBe(45);
   });
 });
