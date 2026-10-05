@@ -1,4 +1,5 @@
 import {
+  QuotaExceededError,
   ServerExistsError,
   type CreateServerSpec,
   type Labels,
@@ -121,6 +122,9 @@ export class HetznerProvider implements Provider {
       // The only unique field we send is the name.
       if (e instanceof HetznerApiError && e.status === 409 && e.code === "uniqueness_error") {
         throw new ServerExistsError(spec.name);
+      }
+      if (e instanceof HetznerApiError && e.code === "resource_limit_exceeded") {
+        throw new QuotaExceededError(e.message);
       }
       throw e;
     }

@@ -1,4 +1,4 @@
-import type { GithubHost, Runner } from "./github.ts";
+import type { GithubHost, Runner, RunState } from "./github.ts";
 
 export class GithubApiError extends Error {
   constructor(
@@ -93,6 +93,16 @@ export class GithubClient implements GithubHost {
       if (body.workflow_runs.some((r) => r.id !== excludeRunId)) return true;
     }
     return false;
+  }
+
+  async runState(runId: number): Promise<RunState> {
+    try {
+      const body = await this.json<{ status: string | null }>("GET", `/actions/runs/${runId}`);
+      return body.status === "completed" ? "finished" : "active";
+    } catch (e) {
+      if (e instanceof GithubApiError && e.status === 404) return "not-found";
+      throw e;
+    }
   }
 
   async deregisterRunner(id: number): Promise<void> {

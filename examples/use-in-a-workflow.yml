@@ -1,6 +1,12 @@
 # Copy into the consuming repo's .github/workflows/ and adapt. This is the
 # Hetzner version; for OVH see examples/use-in-a-workflow-ovh.yml.
 #
+# Shared-pool mode: every run of the repo shares one VM, which is what makes
+# keeping it warm for the paid hour worthwhile. Runs overlap on its runners, and
+# the VM is deleted only once no run is active. To give each run a VM of its own
+# instead, pass `run-id: ${{ github.run_id }}` (see
+# examples/use-in-a-workflow-ovh.yml, which also shows the teardown job).
+#
 # Run tests on a pooled VM. The first job reuses the pool's VM or creates one
 # and makes sure its runners are up; the second runs on those runners. Nothing
 # here deletes the VM: it stays for the rest of its paid hour so the next run

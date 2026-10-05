@@ -1,5 +1,5 @@
 import { runnersOfServer, type GithubHost } from "./github.ts";
-import { serverLabels, type Provider } from "./provider.ts";
+import { runOf, serverLabels, type Provider } from "./provider.ts";
 import type { RunnerRegistrar } from "./registrar.ts";
 
 export interface ReleaseConfig {
@@ -9,6 +9,14 @@ export interface ReleaseConfig {
   readonly newPoolLabel: string;
   /** The release's own workflow run, excluded from the "repo is busy" check. */
   readonly currentRunId?: number;
+  /**
+   * Release the server `ensure` made for this run (`run-id`). Without it only
+   * shared-pool servers are considered, never a per-run one. The relabel drops
+   * the run label, so reap stops seeing the server either way. With a run id the
+   * repo-wide active-runs guard is skipped, as in `reap`: other runs have servers
+   * of their own. Release is meant for the run's last job.
+   */
+  readonly runId?: string;
   /** Skip the busy-runner and active-runs checks. GitHub still refuses a busy runner. */
   readonly force?: boolean;
 }
@@ -82,7 +90,9 @@ export const release = async (
     return { action: "refused", reason: "same-pool", error: `the new pool label must differ from the pool "${cfg.pool}"` };
   }
 
-  const servers = await provider.listServers(serverLabels(cfg.pool, cfg.repo));
+  const servers = (await provider.listServers(serverLabels(cfg.pool, cfg.repo, cfg.runId))).filter(
+    (s) => cfg.runId !== undefined || runOf(s) === undefined,
+  );
   const [server] = servers;
   if (!server) return { action: "refused", reason: "no-server" };
   if (servers.length > 1) {
@@ -99,7 +109,7 @@ export const release = async (
   const mine = runnersOfServer(await github.listRunners(), server.name);
   if (!cfg.force) {
     if (mine.some((r) => r.busy)) return { ...base, action: "refused", reason: "busy" };
-    if (await github.hasActiveRuns(cfg.currentRunId)) return { ...base, action: "refused", reason: "active-runs" };
+    if (cfg.runId === undefined && (await github.hasActiveRuns(cfg.currentRunId))) return { ...base, action: "refused", reason: "active-runs" };
   }
 
   try {

@@ -10,6 +10,8 @@ export interface Runner {
   readonly status: "online" | "offline";
 }
 
+export type RunState = "active" | "finished" | "not-found";
+
 export interface GithubHost {
   listRunners(): Promise<readonly Runner[]>;
   /**
@@ -18,6 +20,13 @@ export interface GithubHost {
    * runner state alone under-reports; this is the conservative backstop.
    */
   hasActiveRuns(excludeRunId?: number): Promise<boolean>;
+  /**
+   * Where a single workflow run stands: `active` while it is queued, in progress
+   * or waiting, `finished` once completed (whatever the conclusion), and
+   * `not-found` if GitHub no longer has it. Unlike `hasActiveRuns` this is about
+   * one run, which is what a per-run server needs.
+   */
+  runState(runId: number): Promise<RunState>;
   /** Must reject if the runner is busy, which GitHub does. */
   deregisterRunner(id: number): Promise<void>;
 }

@@ -9,6 +9,13 @@ inputs:
   pool:
     description: The pool whose server to release. Must match the one given to ensure.
     required: true
+  run-id:
+    description: >-
+      Release the server that ensure made for this run (the same run-id it was
+      given). Without it only shared-pool servers are considered. With it the
+      repo-wide check for other active runs is skipped, since other runs have
+      servers of their own; call it from the run's last job.
+    required: false
   provider:
     description: >-
       Cloud to run on, ovh or hetzner. Defaults to ovh. Each needs its own
@@ -89,6 +96,7 @@ runs:
         VGR_LOCATION: ${{ inputs.location }}
         VGR_GITHUB_TOKEN: ${{ inputs.github-token }}
         VGR_POOL: ${{ inputs.pool }}
+        VGR_RUN_ID: ${{ inputs.run-id }}
         VGR_SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
         VGR_NEW_POOL_LABEL: ${{ inputs.new-pool-label }}
         VGR_FORCE: ${{ inputs.force }}

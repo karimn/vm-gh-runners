@@ -1,14 +1,26 @@
 # The OVH Public Cloud version of examples/use-in-a-workflow.yml. Copy into the
 # consuming repo's .github/workflows/ and adapt.
 #
-# Run tests on a pooled OVH VM. The first job reuses the pool's VM or creates one
-# and makes sure its runners are up; the second runs on those runners. Nothing
-# OVH bills a server for the time it exists, so unlike Hetzner there is no paid
-# hour to wait out: the `teardown` job at the end runs the reap action, which
-# deletes the VM as soon as the tests are done. It keeps the VM if another run of
-# this repo is queued or in progress (that run needs it), and the scheduled
-# reaper (examples/reaper-ovh.yml) stays as the safety net for runs that never
-# reach teardown, such as a cancelled one.
+# Run tests on a VM of their own. The first job creates this run's VM (run-id is
+# the workflow run's id, so two runs never share one) and makes sure its runners
+# are up; the second runs on those runners; the `teardown` job at the end runs
+# the reap action with the same run-id and deletes the VM. OVH bills a server for
+# the time it exists, so there is no paid hour to wait out.
+#
+# One VM per run means concurrent runs never collide: each has its own runners,
+# labelled run-<id>, and one run's teardown cannot delete another run's VM.
+# The price is capacity: every in-flight run holds a VM, so the project's quota
+# caps concurrent runs (a b3-32 is 8 vCPU; a 34-core quota shared with other
+# consumers fits about 3-4). When the quota is full, ensure fails at once and
+# names it; it does not wait. The scheduled reaper (examples/reaper-ovh.yml) is
+# the safety net for runs that never reach teardown, such as a cancelled one: it
+# deletes a per-run VM once its run is no longer queued or in progress.
+#
+# Re-running: use "Re-run all jobs". "Re-run failed jobs" does not work here:
+# GitHub skips the successful vm job and reuses its old runs_on output, but
+# teardown already deleted that VM, so the re-run jobs wait on runner labels that
+# no longer exist. Use one mode per pool: every workflow that uses this pool must
+# pass run-id (a shared-mode job could land on another run's runners).
 #
 # Secrets to add to the repo (Settings > Secrets and variables > Actions):
 #   OVH_APPLICATION_CREDENTIAL_ID      Application credential, created as UNRESTRICTED
@@ -27,8 +39,10 @@ on:
 
 jobs:
   vm:
-    # This job only makes API calls and SSHes in briefly, so any runner will do.
-    runs-on: self-hosted
+    # This job only makes API calls and SSHes in briefly. Keep it off the pool's
+    # own (self-hosted) runners: with one VM per run it could land on another
+    # run's VM, and would hold that runner busy.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       runs_on: ${{ steps.ensure.outputs.runs_on }}
@@ -37,6 +51,7 @@ jobs:
         uses: karimn/vm-gh-runners/ensure@main
         with:
           pool: ci
+          run-id: ${{ github.run_id }}
           provider: ovh # the default; shown for clarity
           # The OVH US account's Keystone (https://auth.cloud.ovh.us/v3) and
           # region (US-EAST-VA-1) are the defaults. An EU account sets
@@ -62,19 +77,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-  # Runs even if the tests failed or were cancelled. It runs on a GitHub-hosted
+  # Runs even if the vm job or the tests failed or were cancelled (reap with a
+  # run-id is a no-op when the run has no VM). It runs on a GitHub-hosted
   # runner on purpose: the pool's runners are `self-hosted` too, so a self-hosted
   # teardown could land on one of them, making it the busy runner that makes reap
-  # keep the server. It is one short job per run, about a minute billed.
+  # keep the server. It is one short job per run, about a minute billed. It must
+  # be the run's last job: with run-id, reap does not count the run itself as
+  # active, and deletes the run's VM as soon as no runner on it is busy.
   teardown:
     needs: [vm, test]
-    if: ${{ always() && needs.vm.result == 'success' }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: karimn/vm-gh-runners/reap@main
         with:
           pool: ci
+          run-id: ${{ github.run_id }}
           provider: ovh # the default; shown for clarity
           location: US-EAST-VA-1
           ovh-application-credential-id: ${{ secrets.OVH_APPLICATION_CREDENTIAL_ID }}

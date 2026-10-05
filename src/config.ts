@@ -34,6 +34,11 @@ export interface CommonConfig {
   readonly provider: ProviderConfig;
   /** A token allowed to manage this repo's runners (Administration: read and write; Actions: read). */
   readonly githubToken: string;
+  /**
+   * The workflow run that owns the server, `${{ github.run_id }}`. Unset is
+   * shared-pool mode. Digits only: it goes into labels and the server's identity.
+   */
+  readonly runId?: string;
 }
 
 export interface EnsureCliConfig extends CommonConfig {
@@ -56,6 +61,8 @@ export interface EnsureCliConfig extends CommonConfig {
 export interface ReapCliConfig extends CommonConfig {
   readonly windowStartMinute?: number;
   readonly currentRunId?: number;
+  /** Delete per-run servers older than this regardless of their run's state. Off when unset. */
+  readonly maxAgeMinutes?: number;
 }
 
 export interface ReleaseCliConfig extends CommonConfig {
@@ -107,12 +114,26 @@ const providerConfig = (env: Env): ProviderConfig => {
 const common = (env: Env): CommonConfig => {
   const repo = env["VGR_REPO"]?.trim() || required(env, "GITHUB_REPOSITORY");
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo)) throw new Error("the repo must be in owner/name form");
+  const runId = env["VGR_RUN_ID"]?.trim();
+  // Actions passes an unset input as "". Anything else must be a real run id.
+  if (runId && !/^\d{1,20}$/.test(runId)) throw new Error("VGR_RUN_ID must be a workflow run id (digits only)");
   return {
     repo,
     pool: required(env, "VGR_POOL"),
     provider: providerConfig(env),
     githubToken: required(env, "VGR_GITHUB_TOKEN"),
+    ...(runId ? { runId } : {}),
   };
+};
+
+/**
+ * With a run id the labels must be run-scoped, or two runs' jobs could land on
+ * each other's runners. A caller's own labels get `run-<id>` appended if missing.
+ */
+const runnerLabels = (given: readonly string[], base: CommonConfig): readonly string[] => {
+  const labels = given.length > 0 ? given : ["vm-gh-runners", `pool-${base.pool}`];
+  const run = base.runId === undefined ? undefined : `run-${base.runId}`;
+  return run === undefined || labels.includes(run) ? labels : [...labels, run];
 };
 
 export const loadEnsureConfig = (env: Env): EnsureCliConfig => {
@@ -129,7 +150,7 @@ export const loadEnsureConfig = (env: Env): EnsureCliConfig => {
     image: env["VGR_IMAGE"]?.trim() || defaults.image,
     location: base.provider.kind === "ovh" ? base.provider.region : env["VGR_LOCATION"]?.trim() || defaults.location,
     runnerCount: integer(env, "VGR_RUNNER_COUNT", 1) ?? 3,
-    labels: labels.length > 0 ? labels : ["vm-gh-runners", `pool-${base.pool}`],
+    labels: runnerLabels(labels, base),
     runnerVersion: env["VGR_RUNNER_VERSION"]?.trim() || "latest",
     extraPackages: list(env["VGR_EXTRA_PACKAGES"]),
     sshKeyNames,
@@ -146,9 +167,11 @@ export const loadReapConfig = (env: Env): ReapCliConfig => {
     throw new Error("VGR_WINDOW_START_MINUTE has no effect on ovh (billed by runtime, idle servers are deleted at once); remove it");
   }
   const currentRunId = integer(env, "GITHUB_RUN_ID", 0);
+  const maxAgeMinutes = integer(env, "VGR_MAX_AGE_MINUTES", 1);
   return {
     ...base,
     ...(windowStartMinute === undefined ? {} : { windowStartMinute }),
+    ...(maxAgeMinutes === undefined ? {} : { maxAgeMinutes }),
     ...(currentRunId === undefined ? {} : { currentRunId }),
   };
 };

@@ -53,6 +53,7 @@ export const runEnsure = async (
       location: cfg.location,
       userData,
       runnerCount: cfg.runnerCount,
+      runId: cfg.runId,
     },
     options,
   );
@@ -95,6 +96,8 @@ export const runReap = async (
       repo: cfg.repo,
       currentRunId: cfg.currentRunId,
       windowStartMinute: cfg.windowStartMinute,
+      runId: cfg.runId,
+      maxAgeMinutes: cfg.maxAgeMinutes,
     },
     now,
   );
@@ -159,6 +162,7 @@ export const runRelease = async (deps: ReleaseDeps, cfg: ReleaseCliConfig): Prom
     repo: cfg.repo,
     newPoolLabel: cfg.newPoolLabel,
     force: cfg.force,
+    runId: cfg.runId,
     currentRunId: cfg.currentRunId,
   });
   const released = result.action === "released";

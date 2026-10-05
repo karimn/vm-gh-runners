@@ -1,5 +1,6 @@
 import {
   labelsMatch,
+  QuotaExceededError,
   ServerExistsError,
   type CreateServerSpec,
   type Labels,
@@ -217,7 +218,7 @@ export class OvhProvider implements Provider {
       this.networkId(),
     ]);
 
-    const res = await this.request("compute", "POST", "/servers", {
+    const res = await this.createRequest({
       server: {
         name: spec.name,
         flavorRef,
@@ -237,6 +238,18 @@ export class OvhProvider implements Provider {
     } catch (e) {
       // Never leave a half-made or losing server behind: it would bill.
       await this.discard(id, e);
+      throw e;
+    }
+  }
+
+  /** Nova answers 403 (or 413 on older releases) with "Quota exceeded for ..." when the project is full. */
+  private async createRequest(body: unknown): Promise<Response> {
+    try {
+      return await this.request("compute", "POST", "/servers", body);
+    } catch (e) {
+      if (e instanceof OvhApiError && (e.status === 403 || e.status === 413) && /quota|over ?limit/i.test(e.message)) {
+        throw new QuotaExceededError(e.message);
+      }
       throw e;
     }
   }
