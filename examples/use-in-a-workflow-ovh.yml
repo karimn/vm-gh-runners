@@ -14,7 +14,7 @@
 #   OVH_APPLICATION_CREDENTIAL_ID      Application credential, created as UNRESTRICTED
 #   OVH_APPLICATION_CREDENTIAL_SECRET  (a restricted one cannot create servers).
 #                                      Shown once, in Public Cloud > Users & Roles.
-#   VGR_GITHUB_TOKEN                   Fine-grained PAT for this repo with Administration: read and write.
+#   VGR_GITHUB_TOKEN                   Fine-grained PAT for this repo with Administration: read and write and Actions: read.
 #   VGR_SSH_PRIVATE_KEY                Private key whose public half is uploaded to the OVH
 #                                      project as a key pair named like ssh-key-names below,
 #                                      IN THE SAME REGION as `location`. A fresh key used for

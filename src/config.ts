@@ -32,7 +32,7 @@ export interface CommonConfig {
   readonly repo: string;
   readonly pool: string;
   readonly provider: ProviderConfig;
-  /** A token allowed to manage this repo's runners (Administration: read and write). */
+  /** A token allowed to manage this repo's runners (Administration: read and write; Actions: read). */
   readonly githubToken: string;
 }
 

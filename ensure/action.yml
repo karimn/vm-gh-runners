@@ -48,7 +48,7 @@ inputs:
   github-token:
     description: >-
       Token that can manage this repo's runners (fine-grained PAT with
-      Administration read and write). The workflow's own GITHUB_TOKEN cannot.
+      Administration read and write, and Actions read). The workflow's own GITHUB_TOKEN cannot.
       Pass it from a secret.
     required: true
   runner-count:

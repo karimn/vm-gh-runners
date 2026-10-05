@@ -161,6 +161,36 @@ describe("errors", () => {
     expect(String(err.message)).not.toContain("SECRET-TOKEN");
   });
 
+  test("a PAT denied on the runs endpoint names Actions: read and the endpoint", async () => {
+    const { gh } = client(() => ({
+      status: 403,
+      body: { message: "Resource not accessible by personal access token" },
+    }));
+    const err = await gh.hasActiveRuns().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GithubApiError);
+    const msg = (err as GithubApiError).message;
+    expect(msg).toContain('lacks "Actions: read"');
+    expect(msg).toContain("GET /repos/karimn/sia/actions/runs");
+    expect(msg).not.toContain("SECRET-TOKEN");
+  });
+
+  test("a PAT denied on runner calls names Administration", async () => {
+    const { gh } = client(() => ({
+      status: 403,
+      body: { message: "Resource not accessible by personal access token" },
+    }));
+    expect(await gh.listRunners().catch((e: Error) => e.message)).toContain('"Administration: read"');
+    expect(await gh.deregisterRunner(7).catch((e: Error) => e.message)).toContain('"Administration: write"');
+    expect(await gh.createRegistrationToken().catch((e: Error) => e.message)).toContain(
+      '"Administration: write"',
+    );
+  });
+
+  test("other 403s get no permission hint", async () => {
+    const { gh } = client(() => ({ status: 403, body: { message: "Must have admin rights" } }));
+    expect(await gh.hasActiveRuns().catch((e: Error) => e.message)).not.toContain("lacks");
+  });
+
   test("survive a non-JSON error body", async () => {
     const f = fake(() => ({ status: 502 }));
     const gh = new GithubClient({ repo: "a/b", token: "t", fetch: f.fetchImpl });

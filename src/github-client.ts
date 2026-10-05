@@ -13,13 +13,29 @@ export class GithubApiError extends Error {
 export interface GithubClientOptions {
   /** `owner/name`. Runners registered to a personal repo serve only that repo. */
   readonly repo: string;
-  /** Needs repo Administration (read and write) to manage runners. Never logged. */
+  /**
+   * Fine-grained PAT with repo Administration (read and write) and Actions (read);
+   * see PAT_PERMISSIONS below for what each call needs. Never logged.
+   */
   readonly token: string;
   readonly fetch?: typeof fetch;
   readonly baseUrl?: string;
 }
 
 const PER_PAGE = 100;
+
+/** The fine-grained PAT permission each REST call needs, keyed by `METHOD path-prefix`. */
+const PAT_PERMISSIONS: readonly (readonly [string, string])[] = [
+  ["GET /actions/runners", "Administration: read"],
+  ["DELETE /actions/runners/", "Administration: write"],
+  ["POST /actions/runners/registration-token", "Administration: write"],
+  ["GET /actions/runs", "Actions: read"],
+];
+
+const PAT_DENIED = "Resource not accessible by personal access token";
+
+const missingPermission = (method: string, path: string): string | undefined =>
+  PAT_PERMISSIONS.find(([key]) => `${method} ${path}`.startsWith(key))?.[1];
 
 interface RunnersPage {
   total_count: number;
@@ -112,7 +128,17 @@ export class GithubClient implements GithubHost {
       } catch {
         // Not JSON; the status text will do.
       }
-      throw new GithubApiError(res.status, `GitHub ${method} ${path} failed (${res.status}): ${detail}`);
+      let hint = "";
+      if (res.status === 403 && detail.includes(PAT_DENIED)) {
+        const needed = missingPermission(method, path);
+        hint =
+          ` -- the github-token PAT lacks "${needed ?? "a required permission"}" on ${this.repo}` +
+          ` (needed for ${method} /repos/${this.repo}${path.split("?")[0]})`;
+      }
+      throw new GithubApiError(
+        res.status,
+        `GitHub ${method} ${path} failed (${res.status}): ${detail}${hint}`,
+      );
     }
     return res;
   }

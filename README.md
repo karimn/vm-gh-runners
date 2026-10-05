@@ -31,7 +31,8 @@ Three composite actions, called from CI workflows:
 
 Each consuming repo needs three kinds of Actions secret: the cloud credential
 (a Hetzner project token, or an OVH application credential id and secret), a
-fine-grained PAT with Administration read and write on that repo (the workflow's
+fine-grained PAT on that repo with Administration read and write and Actions
+read (the workflow's
 own `GITHUB_TOKEN` cannot manage runners), and an SSH private key whose public
 half is uploaded to the cloud project. The example files list them.
 
