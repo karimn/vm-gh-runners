@@ -16,6 +16,12 @@
 # the safety net for runs that never reach teardown, such as a cancelled one: it
 # deletes a per-run VM once its run is no longer queued or in progress.
 #
+# Re-running: use "Re-run all jobs". "Re-run failed jobs" does not work here:
+# GitHub skips the successful vm job and reuses its old runs_on output, but
+# teardown already deleted that VM, so the re-run jobs wait on runner labels that
+# no longer exist. Use one mode per pool: every workflow that uses this pool must
+# pass run-id (a shared-mode job could land on another run's runners).
+#
 # Secrets to add to the repo (Settings > Secrets and variables > Actions):
 #   OVH_APPLICATION_CREDENTIAL_ID      Application credential, created as UNRESTRICTED
 #   OVH_APPLICATION_CREDENTIAL_SECRET  (a restricted one cannot create servers).

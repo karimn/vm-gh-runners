@@ -19,7 +19,9 @@ scheduled workflow calls `reap`.
    repo or creates one, then makes sure `runner-count` runners are registered on
    it. It outputs `runs_on`, the labels later jobs target.
 2. Later jobs use `runs-on: ${{ fromJSON(...runs_on) }}` and run on those runners.
-3. Nothing deletes the VM at the end of a run. A scheduled workflow calls `reap/`
+3. In shared-pool mode nothing deletes the VM at the end of a run (with `run-id`
+   the run's last job calls `reap/` to delete its own VM; see "One server per
+   workflow run"). A scheduled workflow calls `reap/`
    every 5 minutes. On a provider that bills per started hour it deletes an idle
    server in the last 10 minutes of each paid hour, and a busy server rides into
    the next paid hour. On a provider that bills by runtime it deletes an idle
@@ -54,7 +56,8 @@ scheduled workflow calls `reap`.
   A prebuilt snapshot is the later optimisation if cold starts hurt.
 - Runners registered to a personal-account repo serve only that repo, so each
   consuming repo gets its own VM and its own secrets.
-- Servers are labelled `pool` and `repo`; the reaper touches only its own.
+- Servers are labelled `pool` and `repo`, and `vgr-run` when made for one run;
+  the reaper touches only its own.
 - `release` hands a server to another owner. `reap` finds servers by label and
   `ensure` locks on the name, so deregistering the runners is not enough: the
   server is relabelled (`pool` becomes the new label, default `released`;
@@ -104,7 +107,16 @@ run:
 - Re-runs. The attempt is not part of the identity. Attempts of one run never
   overlap, so a re-run reuses the previous attempt's server if teardown has not
   deleted it, else creates a new one under the same name (Hetzner waits out a
-  server still being deleted, as in "Concurrency").
+  server still being deleted, as in "Concurrency"). "Re-run all jobs" works.
+  "Re-run failed jobs" is unsupported: GitHub skips the successful `vm` job and
+  reuses its old `runs_on` output, but teardown deleted the VM, so the re-run jobs
+  queue on `run-<id>` labels no runner has, and a queued job has no timeout.
+- One mode per pool. A shared-mode job's labels are a subset of a per-run
+  runner's, so a shared-mode workflow on the same pool could land on another run's
+  runners. All workflows on a pool pass `run-id`, or none does.
+- Decision to review: the Hetzner window rule was kept for shared servers but
+  skipped for per-run ones (above). Keeping it would let a "Re-run all jobs" within
+  the hour reuse a warm VM, at the cost of a slot of the 5-server cap.
 - `release` with `run-id` hands over that run's server and skips the repo-wide
   guard; the relabel drops `vgr-run`, so nothing reaps it afterwards.
 - Capacity. Concurrent runs are bounded by the project's quota, not by anything

@@ -66,10 +66,20 @@ Give `ensure` the run's id and each workflow run gets **its own VM**:
 - A re-run of a run (same id, higher `run_attempt`) reuses the previous attempt's
   VM if teardown has not deleted it, and otherwise creates a new one under the
   same name. Attempts never overlap, so attempt is not part of the identity.
+  **"Re-run all jobs" works. "Re-run failed jobs" does not**: GitHub skips the
+  already-successful `vm` job and reuses its old `runs_on` output, but teardown
+  deleted that VM, so the re-run jobs wait for runners labelled `run-<id>` that no
+  longer exist (a queued job is not bound by `timeout-minutes`; cancel it and use
+  "Re-run all jobs").
+- **One mode per pool.** A shared-mode job's labels (`self-hosted`, `vm-gh-runners`,
+  `pool-<pool>`) are a subset of a per-run runner's, so a shared-mode workflow on
+  the same pool can land on another run's runners. Every workflow that uses a pool
+  must pass `run-id`, or none.
 - With `run-id` unset everything behaves as before.
 - On Hetzner the paid-hour window does not apply to per-run VMs: nothing will ever
   reuse one, so waiting out the hour buys nothing and would hold one of the
-  account's five server slots.
+  account's five server slots. (The cost: a "Re-run all jobs" within the hour
+  creates a new VM instead of reusing the warm one.)
 
 **Capacity.** Each in-flight run holds a VM. A b3-32 is 8 vCPU; the Sia.jl OVH US
 project's quota is 34 cores / 10 instances, shared with pioneer, so about 3 to 4
