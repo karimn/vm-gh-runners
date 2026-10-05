@@ -71,10 +71,15 @@ inputs:
     description: >-
       Comma-separated runner labels. Defaults to "vm-gh-runners,pool-<pool>",
       plus run-<run-id> when run-id is set (it is appended to a list you give if
-      missing, so runs cannot share runners).
+      missing, so runs cannot share runners). These are the runners' ONLY labels:
+      they are registered with --no-default-labels, so they do not carry
+      self-hosted, Linux or X64, and a job that targets self-hosted cannot land
+      on them. Naming one of those three here is an error.
     required: false
   runner-version:
-    description: Runner version such as 2.321.0, or "latest" (the default). Pin it for repeatable builds.
+    description: >-
+      Runner version such as 2.337.0, or "latest" (the default). Pin it for
+      repeatable builds. At least 2.305.0, the first with --no-default-labels.
     required: false
   extra-packages:
     description: Comma-separated extra apt packages the jobs need.
@@ -95,8 +100,9 @@ outputs:
     value: ${{ steps.cli.outputs.registered }}
   runs_on:
     description: >-
-      JSON array of labels for the jobs that should use the VM. With run-id
-      set, they match only this run's runners. Pass it
+      JSON array of labels for the jobs that should use the VM: exactly the
+      runners' labels, without self-hosted. With run-id set, they match only
+      this run's runners. Pass it
       through the fromJSON function in a later job's runs-on (see
       examples/use-in-a-workflow.yml). It is not written out as an expression
       here because GitHub evaluates expressions in action descriptions.

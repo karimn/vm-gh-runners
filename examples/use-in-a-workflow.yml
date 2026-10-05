@@ -27,6 +27,8 @@ on:
 jobs:
   vm:
     # This job only makes API calls and SSHes in briefly, so any runner will do.
+    # It cannot land on the pool's own runners: they carry only the runs_on
+    # labels, not self-hosted.
     runs-on: self-hosted
     timeout-minutes: 30
     outputs:

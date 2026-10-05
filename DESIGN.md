@@ -88,7 +88,10 @@ run:
   so the two modes never adopt each other's servers.
 - Isolation. Default runner labels gain `run-<id>` (appended to a caller's own
   list if missing); `runs_on` returns the same labels. GitHub schedules a job only
-  onto a runner that has all of its labels, so jobs cannot cross runs.
+  onto a runner that has all of its labels, so this run's jobs cannot land on
+  another run's runners. The reverse needs more: a job lands on any runner whose
+  labels are a superset of its own, so runners carry no labels beyond these (see
+  "Runner labels").
 - Teardown (`reap` with `run-id`). Only that run's server. The repo-wide
   active-runs guard is replaced by "the run's own jobs are done", which is true
   because teardown is the run's last job; the run is not counted. A busy runner
@@ -127,6 +130,33 @@ run:
   instead of retrying: waiting cannot help until another run finishes.
 - The `ensure` job should not run on the pool's own runners (it could land on
   another run's VM and hold a runner there).
+
+## Runner labels
+
+Decided 2026-10-05, after karimn/Sia.jl runs 37350044108 and 37350552615 ran jobs
+that asked only for `self-hosted` on another run's per-run VM.
+
+- `config.sh --no-default-labels`: a runner carries exactly the configured labels,
+  never GitHub's `self-hosted`, `Linux`, `X64`. With the defaults, every job in the
+  repo that targets `self-hosted` matched every pool runner, and `run-<id>` only
+  kept a run's jobs in; it never kept other jobs out.
+- `runs_on` is exactly the registered labels; one list (`EnsureCliConfig.labels`)
+  feeds both the registrar and the output, and a test drives config, the real
+  registrar's script and the output together.
+- Shared-pool mode drops `self-hosted` too, rather than keeping it there for
+  compatibility. Keeping it would leave the same leak in that mode (a stray
+  `self-hosted` job holding a pool runner, and keeping reap's busy check true).
+  Breaking for callers that hard-coded `self-hosted` with the pool labels; the
+  README lists what they change.
+- `runner-labels` may not name a default label (case-insensitive, as GitHub
+  matches), since that would undo the above.
+- The flag first shipped in runner v2.305.0 (actions/runner#2443), so a pinned
+  `runner-version` below that is rejected. `--replace` (repairing a runner under
+  the same name) clears the agent's labels before applying the new ones, so a
+  repaired runner does not regain the defaults (checked in the runner's
+  `ConfigurationManager.UpdateExistingAgent` at v2.337.0).
+- A server registered before this keeps its default-labelled runners until it is
+  deleted, because `ensure` leaves healthy runners alone.
 
 ## GitHub token permissions
 
@@ -208,9 +238,11 @@ rather than creating a second.
 - A server left by a crashed run is reaped at the end of its paid hour (Hetzner) or at the next reap (OVH). A per-run server is reaped at the next scheduled reap once its run is completed.
 - Per-run mode: a run that is queued behind a manual-approval gate counts as active and keeps its server until `max-age-minutes`, if set. A re-run triggered in the instant after the scheduled reaper saw its run completed but before the delete can lose its VM; narrow, and the next `ensure` creates a new one.
 - The reaper (and any teardown job) must not run on one of the pool's own runners: it would be the busy
-  runner that makes reap keep the server. Pool runners are `self-hosted` like any
-  other, so its `runs-on` needs a label only non-pool runners have, or a
-  GitHub-hosted runner (what the OVH examples use).
+  runner that makes reap keep the server. Pool runners do not carry `self-hosted`
+  (see "Runner labels"), so a plain `runs-on: self-hosted` reaper cannot land on
+  one; a GitHub-hosted runner (what the OVH examples use) cannot either. A server
+  registered before that change still has `self-hosted` runners until it is
+  deleted.
 - On Hetzner the reaper must run at least every 5 minutes, or a VM is billed a
   second hour. It is cheap on a self-hosted runner and costly on a GitHub-hosted
   one (about 8,600 billed minutes a month). On OVH it is only a safety net behind

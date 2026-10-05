@@ -39,9 +39,9 @@ on:
 
 jobs:
   vm:
-    # This job only makes API calls and SSHes in briefly. Keep it off the pool's
-    # own (self-hosted) runners: with one VM per run it could land on another
-    # run's VM, and would hold that runner busy.
+    # This job only makes API calls and SSHes in briefly. It cannot land on a
+    # pool VM (pool runners do not carry self-hosted), but it must not wait on
+    # one either: a GitHub-hosted runner is always there.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -78,10 +78,10 @@ jobs:
       - uses: actions/checkout@v4
 
   # Runs even if the vm job or the tests failed or were cancelled (reap with a
-  # run-id is a no-op when the run has no VM). It runs on a GitHub-hosted
-  # runner on purpose: the pool's runners are `self-hosted` too, so a self-hosted
-  # teardown could land on one of them, making it the busy runner that makes reap
-  # keep the server. It is one short job per run, about a minute billed. It must
+  # run-id is a no-op when the run has no VM). It must not run on a pool runner,
+  # where it would be the busy runner that makes reap keep the server. Pool
+  # runners do not carry `self-hosted`, so a self-hosted runner of your own works
+  # too; a GitHub-hosted one is always available, about a minute billed. It must
   # be the run's last job: with run-id, reap does not count the run itself as
   # active, and deletes the run's VM as soon as no runner on it is busy.
   teardown:

@@ -15,10 +15,10 @@
 #
 # Every 30 minutes is enough because it is only a safety net: a missed VM costs
 # at most about half an hour of runtime, not a full extra hour as on Hetzner.
-# It runs on a GitHub-hosted runner (about 1,500 billed minutes a month) on
-# purpose. The pool's runners are `self-hosted` too, so a self-hosted reaper
-# could land on one of them, making it the busy runner that makes reap keep the
-# server. A GitHub-hosted runner is never on the VM.
+# It must not run on a pool runner, where it would be the busy runner that makes
+# reap keep the server. Pool runners do not carry `self-hosted`, so a
+# self-hosted runner of your own is safe; this uses a GitHub-hosted one (about
+# 1,500 billed minutes a month), which is never on the VM and always available.
 #
 # `location` must match the one given to ensure: servers are listed per region.
 
